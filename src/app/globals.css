@@ -1,26 +1,86 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ------------------------------------------------------------------ */
+/*  Design tokens — dark & cinematic                                   */
+/*  (@theme tokens are emitted as :root CSS vars, so JS/shaders can     */
+/*   read e.g. getComputedStyle(root).getPropertyValue('--color-accent')) */
+/* ------------------------------------------------------------------ */
+@theme {
+  --color-bg: #07070a;
+  --color-bg-elev: #0e0e14;
+  --color-ink: #f4f1ea;
+  --color-ink-dim: #a7a29b;
+  --color-line: #1c1c24;
+  --color-accent: #ff5c38;
+  --color-accent-2: #4d6cfa;
+  --color-glow: #ff7a4d;
+
+  --font-display: var(--ff-display), "Times New Roman", serif;
+  --font-body: var(--ff-body), system-ui, sans-serif;
+  --font-mono: var(--ff-mono), ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ------------------------------------------------------------------ */
+/*  Base                                                               */
+/* ------------------------------------------------------------------ */
+html,
+body {
+  height: 100%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: #0a0a0a;
+}
+
+/* Visible keyboard focus. Essential: the custom cursor hides the native pointer,
+   and `cursor: none` does not suppress an outline, so this renders regardless. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Lenis drives the motion — hide the native scrollbar */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+html {
+  scrollbar-width: none;
+}
+
+/* Custom cursor: hide the native one on precise pointers when active */
+@media (pointer: fine) {
+  html.has-custom-cursor,
+  html.has-custom-cursor * {
+    cursor: none !important;
+  }
+}
+
+/* Accessibility backstop: collapse CSS motion if the OS asks for it.
+   (Component-level logic also lightens/disables the WebGL scene.) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
