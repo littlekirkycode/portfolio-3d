@@ -945,9 +945,6 @@ const BAY_VARIANTS = [
 function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolean; mobile?: boolean }) {
   const z = room.side < 0 ? -HALF_W : HALF_W;
   const rotY = room.side < 0 ? 0 : Math.PI;
-  // On mobile the camera is zoomed in (tighter fov), so pull the screen + info
-  // panel toward the bay centre so neither crops at the frame edge.
-  const cx = mobile ? 0.62 : 1; // x-offset compression for back-wall content
   const v = room.variant;
   const cfg = BAY_VARIANTS[v];
   const warmTint = useMemo(
@@ -981,22 +978,37 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
         <BayPlaque room={room} />
       </group>
 
-      {/* hero screen — the prominent focal point, on the back wall */}
-      <group position={[-1.55 * cx, cfg.screenY, -ALCOVE_DEPTH + 0.32]} scale={cfg.screenScale}>
+      {/* DESKTOP: screen left + info panel right, side by side (landscape).
+          MOBILE: stack them — screen high & centred, info panel centred below &
+          facing straight out — so the wide panel fits a tall portrait frame
+          instead of clipping off the right edge. */}
+      {/* hero screen */}
+      <group
+        position={mobile ? [0, 3.15, -ALCOVE_DEPTH + 0.32] : [-1.55, cfg.screenY, -ALCOVE_DEPTH + 0.32]}
+        scale={mobile ? cfg.screenScale * 0.82 : cfg.screenScale}
+      >
         <RoomScreen room={room} animate={animate} />
       </group>
 
-      {/* floating holographic info — near the opening, in FRONT of the props so
-          nothing can occlude the text; tilted toward the approaching camera */}
-      <group position={[1.55 * cx, isExp ? 1.95 : 1.78, -1.5]} rotation-y={mobile ? -0.18 : -0.3}>
+      {/* floating holographic info — in FRONT of the props so nothing occludes it.
+          On mobile it's smaller (the panel is a wide canvas) and centred below the
+          screen so the whole stack fits a portrait frame. */}
+      <group
+        position={mobile ? [0, 1.15, -0.3] : [1.55, isExp ? 1.95 : 1.78, -1.5]}
+        rotation-y={mobile ? 0 : -0.3}
+        scale={mobile ? 0.66 : 1}
+      >
         {isExp ? <TimelinePanel room={room} /> : <InfoPanel room={room} />}
       </group>
 
-      {/* holographic name label — centred at the top of the bay, facing straight
-          out (the info panel keeps its tilt, but the name reads flat) */}
-      <group position={[0, 3.2, -0.9]}>
-        <RoomLabel room={room} />
-      </group>
+      {/* holographic name label — centred at the top of the bay. Hidden on mobile
+          where the vertical stack needs that height for the raised screen (the
+          title already shows on the screen + info panel). */}
+      {!mobile && (
+        <group position={[0, 3.2, -0.9]}>
+          <RoomLabel room={room} />
+        </group>
+      )}
 
       {/* flush accent mat (shape per app; Nuremi = map floor) */}
       <BayMat room={room} />

@@ -33,13 +33,13 @@ export const ALCOVE_DEPTH = 4.0; // 2 tiles deep (from the inner face)
  *  the whole scene is squashed on Z by this factor — bringing the side walls in
  *  toward the props without moving anything in X (length) or Y (height). The Rig
  *  scales its sideways look-target to match. Desktop = 1 (untouched). */
-export const MOBILE_Z = 0.66;
+export const MOBILE_Z = 0.74;
 
 /** Target HORIZONTAL fov (deg) FovFit aims for. Mobile uses a tighter value so
  *  the rooms + text read BIGGER (zoomed in); the narrower MOBILE_Z corridor means
  *  the side bays still fit the frame at this tighter angle. */
 export const HFOV_DESKTOP = 62;
-export const HFOV_MOBILE = 50;
+export const HFOV_MOBILE = 58;
 
 export const TRAVEL = 190;
 
