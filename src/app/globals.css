@@ -72,6 +72,53 @@ html {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Diegetic HUD chrome (corner brackets + readout blink + warp flash) */
+/* ------------------------------------------------------------------ */
+/* 1px accent frame; retint per room via --hud-accent */
+.hud-frame {
+  position: relative;
+  border: 1px solid
+    color-mix(in srgb, var(--hud-accent, var(--color-accent)) 32%, transparent);
+}
+
+/* four L-shaped corner brackets, slightly brighter than the frame */
+.hud-bracket {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+  border: 0 solid var(--hud-accent, var(--color-accent));
+}
+.hud-bracket.tl { top: -1px; left: -1px; border-top-width: 1px; border-left-width: 1px; }
+.hud-bracket.tr { top: -1px; right: -1px; border-top-width: 1px; border-right-width: 1px; }
+.hud-bracket.bl { bottom: -1px; left: -1px; border-bottom-width: 1px; border-left-width: 1px; }
+.hud-bracket.br { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
+
+/* slow status blink for readout dots */
+@keyframes hud-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.2; }
+}
+.hud-blink {
+  animation: hud-blink 1.6s steps(1) infinite;
+}
+
+/* full-screen white-blue flash for the DEPART sequence (opacity driven by JS) */
+.depart-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    120% 120% at 50% 50%,
+    #eaf4ff 0%,
+    #bcd9ff 45%,
+    rgba(77, 108, 250, 0.13) 100%
+  );
+}
+
 /* Accessibility backstop: collapse CSS motion if the OS asks for it.
    (Component-level logic also lightens/disables the WebGL scene.) */
 @media (prefers-reduced-motion: reduce) {

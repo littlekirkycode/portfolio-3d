@@ -5,11 +5,46 @@ import { useRef } from "react";
 import type { PerspectiveCamera } from "three";
 import { scrollRefs, useScrollStore } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
-import { TRAVEL, EYE_Y, HALF_W, cameraXAt, focusAt, featureFocusAt, FEATURE_X } from "./hallConfig";
+import {
+  TRAVEL,
+  EYE_Y,
+  HALF_W,
+  cameraXAt,
+  focusAt,
+  featureFocusAt,
+  galleryFocusAt,
+  FEATURE_X,
+  FEATURE_RECESS_DEPTH,
+  GALLERY_X,
+  GALLERY_SIDE,
+} from "./hallConfig";
 
 export { TRAVEL };
 
-type RigProps = { frozen?: boolean; zScale?: number };
+type RigProps = { frozen?: boolean; mobile?: boolean };
+
+/** Portrait step distances: how far the camera walks TOWARD (+) or AWAY from
+ *  (−) the focused exhibit (world z) at full dwell. Desktop stays on the
+ *  corridor centreline. Bays: portrait reads side-glanced alcoves too small,
+ *  so the camera closes ~half the gap and frames them head-on. Showreel: the
+ *  panel is WIDE — portrait must back off or it crops both edges (QA mobile
+ *  shot1). Gallery: no step — the drifting pilot sits off-centre in the
+ *  glazing run and any step-in pushes him out of the narrow frame. */
+const STEP_BAY = 1.8;
+const STEP_FEATURE = -0.6;
+const STEP_GALLERY = 0;
+
+// stable debug payload for window.__rig — see the bottom of Rig's useFrame
+const rigDebug = {
+  p: 0,
+  camX: 0,
+  targetX: 0,
+  lookX: 0,
+  lookZ: 0,
+  focusRoom: null as string | null,
+  focusEase: 0,
+  galleryEase: 0,
+};
 
 /**
  * Camera dolly down the corridor. X follows a waypoint path (see hallConfig)
@@ -18,12 +53,13 @@ type RigProps = { frozen?: boolean; zScale?: number };
  * squarely framed, not off to one side — turning nearly fully sideways.
  * Mouse only adds a tiny positional parallax.
  */
-export default function Rig({ frozen = false, zScale = 1 }: RigProps) {
+export default function Rig({ frozen = false, mobile = false }: RigProps) {
   const camera = useThree((s) => s.camera) as PerspectiveCamera;
 
   const lookX = useRef(0);
   const lookZ = useRef(0);
   const focusedId = useRef<string | null>(null);
+  const snapped = useRef(false);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 30);
@@ -37,14 +73,37 @@ export default function Rig({ frozen = false, zScale = 1 }: RigProps) {
 
     const p = scrollRefs.progress;
 
+    // First frame: SNAP to the scroll-derived position. The Canvas camera
+    // boots at x=0, and damping from there produced a ~1.5s fly-in through
+    // the backstage lobby (its SEALED sign + a second KIRKHAM stencil) on
+    // every load/refresh (QA: "goes to a secondary kirkham / airlock sealed").
+    if (!snapped.current) {
+      camera.position.set(cameraXAt(p), EYE_Y, 0);
+      lookX.current = camera.position.x + 6;
+      lookZ.current = 0;
+      snapped.current = true;
+    }
+
+    const f = focusAt(p);
+    const gf = galleryFocusAt(p);
+    const ff = featureFocusAt(p);
+
+    // Portrait step-in: walk toward the focused exhibit instead of glancing at
+    // it from the centreline. Focus bands never overlap, so the terms sum.
+    let zPos = 0;
+    if (mobile) {
+      zPos =
+        (f.room ? f.ease * f.room.side * STEP_BAY : 0) +
+        gf * GALLERY_SIDE * STEP_GALLERY +
+        ff * STEP_FEATURE;
+    }
+
     // Slow, eased motion (low damping) keeps turns lazy + smooth — much less
     // disorienting than snappy transitions. No velocity FOV kick (nausea trigger).
     // Camera is driven purely by scroll — the mouse never moves it.
     camera.position.x = damp(camera.position.x, cameraXAt(p), 4.0, dt);
-    camera.position.z = damp(camera.position.z, 0, 3, dt);
+    camera.position.z = damp(camera.position.z, zPos, 3, dt);
     camera.position.y = damp(camera.position.y, EYE_Y, 3, dt);
-
-    const f = focusAt(p);
     // Publish the focused bay (coarse — only on change) so the DOM can show a
     // "Visit project" link for it.
     const fid = f.room && f.ease > 0.85 ? f.room.id : null;
@@ -52,27 +111,53 @@ export default function Rig({ frozen = false, zScale = 1 }: RigProps) {
       focusedId.current = fid;
       useScrollStore.getState().setFocusedRoom(fid);
     }
+    // Look-target z values are ABSOLUTE world z (not camera-relative): with the
+    // portrait step-in the camera leaves the centreline, and a relative offset
+    // would overshoot recessed bays and break the flat-panel rule below.
+    // "Straight ahead" = the camera's own z (parallel to the hall).
     let tx = camera.position.x + 6;
-    let tz = 0;
+    let tz = camera.position.z;
     if (f.room) {
       // Blend the look target from "straight ahead" to the room's exact centre.
-      // zScale matches the mobile Z-squash so the turn aims at the moved wall.
       tx = camera.position.x + 6 + f.ease * (f.room.x - (camera.position.x + 6));
-      tz = f.ease * f.room.side * (HALF_W + 1.3) * zScale;
+      tz = camera.position.z + f.ease * (f.room.side * (HALF_W + 1.3) - camera.position.z);
+    }
+    // Observation gallery (slot 5): turn to the +Z glazing run. FLAT-PANEL RULE:
+    // the glazing is FLAT on the wall line, so aim the look target EXACTLY at
+    // the glass plane z (inner wall face) — overshooting like the recessed bays
+    // do would slide the flat panel off-frame. No overlap with room bands (the
+    // gallery owns its own slot).
+    if (gf > 0) {
+      tx = camera.position.x + 6 + gf * (GALLERY_X - (camera.position.x + 6));
+      tz = camera.position.z + gf * (GALLERY_SIDE * (HALF_W - 0.06) - camera.position.z);
     }
     // Entrance showreel: turn to face the feature screen (on the +Z wall) during
     // its lobby band (no overlap with room bands).
-    const ff = featureFocusAt(p);
     if (ff > 0) {
-      // Flat wall screen (not recessed like a room) — aim the look target EXACTLY
-      // at the screen plane (z ≈ HALF_W), turning fully sideways, so it frames
-      // head-on. Overshooting (like rooms do) would slide a flat panel off-frame.
+      // Flat panel — same rule: aim EXACTLY at the glass plane. The showreel is
+      // recessed OUTWARD by FEATURE_RECESS_DEPTH (glass at
+      // HALF_W - 0.06 + FEATURE_RECESS_DEPTH, matching FeatureScreen's plane).
       tx = camera.position.x + 6 + ff * (FEATURE_X - (camera.position.x + 6));
-      tz = ff * (HALF_W - 0.06) * zScale;
+      tz = camera.position.z + ff * (HALF_W - 0.06 + FEATURE_RECESS_DEPTH - camera.position.z);
     }
     lookX.current = damp(lookX.current, tx, 4.0, dt);
     lookZ.current = damp(lookZ.current, tz, 4.0, dt);
-    camera.lookAt(lookX.current, EYE_Y, camera.position.z + lookZ.current);
+    camera.lookAt(lookX.current, EYE_Y, lookZ.current);
+
+    // Debug/verify hook (read by the screenshot harness). One stable object
+    // mutated in place (no per-frame allocation), exposed non-enumerably so
+    // window-walking dev tooling never tries to serialise it.
+    rigDebug.p = p;
+    rigDebug.camX = camera.position.x;
+    rigDebug.targetX = cameraXAt(p);
+    rigDebug.lookX = lookX.current;
+    rigDebug.lookZ = lookZ.current;
+    rigDebug.focusRoom = f.room?.id ?? null;
+    rigDebug.focusEase = f.ease;
+    rigDebug.galleryEase = gf;
+    if (!(window as { __rig?: object }).__rig) {
+      Object.defineProperty(window, "__rig", { value: rigDebug, configurable: true });
+    }
   });
 
   return null;

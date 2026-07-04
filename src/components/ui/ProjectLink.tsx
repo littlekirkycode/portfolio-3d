@@ -29,9 +29,18 @@ export default function ProjectLink() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 18 }}
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="pointer-events-auto fixed bottom-[6vh] left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-bg-elev/80 px-6 py-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-ink backdrop-blur-md transition-colors hover:border-ink/60"
-          style={{ boxShadow: `0 0 26px -10px ${room.accent}` }}
+          className="hud-frame pointer-events-auto fixed bottom-[6vh] left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 bg-bg-elev/80 px-6 py-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-ink backdrop-blur-md transition-colors hover:text-ink"
+          style={
+            {
+              boxShadow: `0 0 26px -10px ${room.accent}`,
+              "--hud-accent": room.accent,
+            } as React.CSSProperties
+          }
         >
+          <span aria-hidden className="hud-bracket tl" />
+          <span aria-hidden className="hud-bracket tr" />
+          <span aria-hidden className="hud-bracket bl" />
+          <span aria-hidden className="hud-bracket br" />
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: room.accent }} aria-hidden />
           Visit {project.title}
           <span aria-hidden>↗</span>

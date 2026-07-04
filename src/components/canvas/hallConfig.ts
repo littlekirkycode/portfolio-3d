@@ -29,15 +29,10 @@ export const ALCOVE_TOP = WALL_H; // full-height bays
 export const ALCOVE_OPEN_W = 8.0; // 4 tiles wide
 export const ALCOVE_DEPTH = 4.0; // 2 tiles deep (from the inner face)
 
-/** On portrait mobile the corridor reads too wide (empty floor by the walls), so
- *  the whole scene is squashed on Z by this factor — bringing the side walls in
- *  toward the props without moving anything in X (length) or Y (height). The Rig
- *  scales its sideways look-target to match. Desktop = 1 (untouched). */
-export const MOBILE_Z = 0.74;
-
 /** Target HORIZONTAL fov (deg) FovFit aims for. Mobile uses a tighter value so
- *  the rooms + text read BIGGER (zoomed in); the narrower MOBILE_Z corridor means
- *  the side bays still fit the frame at this tighter angle. */
+ *  the rooms + text read BIGGER (zoomed in); the Rig's portrait step-in (the
+ *  camera walks TOWARD the focused bay — see Rig) does the rest of the mobile
+ *  framing. No world squash: the corridor is the same geometry on every device. */
 export const HFOV_DESKTOP = 62;
 export const HFOV_MOBILE = 58;
 
@@ -98,11 +93,22 @@ export const HALL_LEN = WALL_END - WALL_START;
 export const HALL_CENTER_X = (WALL_START + WALL_END) / 2;
 export const END_VISUAL_X = ROOMS[ROOMS.length - 1].x + 30; // far-end feature
 
-/* ── camera path: dwell + center on each room ───────────────────────────── */
+/* ── camera path: TEN dwell slots (9 rooms + the observation gallery) ────── */
 
-const ROOM_LO = 0.22; // rooms occupy this progress band (Hero clears ~0.16, Contact ~0.84)
+const ROOM_LO = 0.22; // slots occupy this progress band (Hero clears ~0.16, Contact ~0.84)
 const ROOM_HI = 0.82;
-const SLOT = (ROOM_HI - ROOM_LO) / ROOMS.length;
+/** Ten dwell slots: 0-4 = ROOMS[0..4], 5 = OBSERVATION GALLERY (camera turns to
+ *  the +z glazing at GALLERY_X), 6-9 = ROOMS[5..8]. Dwell centre of slot i =
+ *  ROOM_LO + (i + 0.5) * SLOT exactly — the screenshot harness and every
+ *  focus/window band derive from this. */
+const N_SLOTS = ROOMS.length + 1; // 10
+const SLOT = (ROOM_HI - ROOM_LO) / N_SLOTS; // 0.06
+const GALLERY_SLOT = 5;
+/** Progress where dwell slot i's band starts. */
+const slotStart = (i: number) => ROOM_LO + i * SLOT;
+/** Room index → its dwell slot (rooms skip the gallery's slot 5). */
+const roomSlot = (i: number) => (i < GALLERY_SLOT ? i : i + 1);
+
 export const START_X = ROOMS[0].x - 20;
 const END_X = ROOMS[ROOMS.length - 1].x + 26;
 
@@ -112,21 +118,104 @@ const END_X = ROOMS[ROOMS.length - 1].x + 26;
 export const FEATURE_X = START_X + 11;
 const FEATURE_CAM_X = FEATURE_X;
 
-// keyframes of (progress → cameraX); a flat "dwell" band sits at each room.
+/** How far the showreel wall is recessed OUTWARD (+z) at FEATURE_X. KitShell
+ *  cuts the wall there and rebuilds it this far back; FeatureScreen's glass
+ *  plane AND Rig's feature look-target BOTH offset by this so the flat panel
+ *  still frames head-on (flat-panel rule — see Rig). */
+export const FEATURE_RECESS_DEPTH = 1.0;
+
+/* ── observation gallery (dwell slot 5) ─────────────────────────────────── */
+
+/** Gallery glazing lives on the +z wall — opposite xuabelle's bay (ROOMS[4]). */
+export const GALLERY_SIDE = 1;
+/** Width of the wall cut in world units (3 wall tiles). */
+export const GALLERY_SPAN = TILE * 3;
+
+/** Nearest wall-tile COLUMN centre (columns sit at WALL_START + TILE*(i+0.5)),
+ *  so a GALLERY_SPAN cut centred here lands exactly on tile boundaries. */
+const snapToColumn = (v: number) =>
+  WALL_START + TILE / 2 + TILE * Math.round((v - WALL_START - TILE / 2) / TILE);
+
+/** Centre of the glazed run: the middle of the gap between rooms 4 and 5,
+ *  column-snapped, then walked in whole tiles until the cut stays clear of any
+ *  +z bay opening it would otherwise bite into (room 5's bay starts at
+ *  ROOMS[5].x - ALCOVE_OPEN_W/2, which the raw midpoint's span overlaps). */
+export const GALLERY_X = (() => {
+  let x = snapToColumn((ROOMS[4].x + ROOMS[5].x) / 2);
+  if (ROOMS[5].side === GALLERY_SIDE) {
+    const maxX = ROOMS[5].x - ALCOVE_OPEN_W / 2 - GALLERY_SPAN / 2;
+    while (x > maxX) x -= TILE;
+  }
+  if (ROOMS[4].side === GALLERY_SIDE) {
+    const minX = ROOMS[4].x + ALCOVE_OPEN_W / 2 + GALLERY_SPAN / 2;
+    while (x < minX) x += TILE;
+  }
+  return x;
+})();
+
+/* ── deck architecture: bulkhead gates + porthole viewports ──────────────── */
+
+/** Deck boundaries — deck 1 = rooms 0-2, deck 2 = rooms 3-4 + gallery, deck 3 =
+ *  rooms 5-8. A gate marks each boundary; its accent is the NEXT deck's first
+ *  room accent (the palette you're walking into). Positions sit midway between
+ *  the flanking rooms' x — both walls are solid there (room 5's bay starts
+ *  flush at the gallery's far edge, so the first solid cross-section after the
+ *  glazing is past bay 5). */
+export const GATES: { x: number; accent: string }[] = [
+  { x: (ROOMS[2].x + ROOMS[3].x) / 2, accent: ROOMS[3].accent },
+  { x: (ROOMS[5].x + ROOMS[6].x) / 2, accent: ROOMS[5].accent },
+];
+
+/** Small viewports on otherwise-blank wall runs. Scanned along the room band on
+ *  wall-tile column centres, alternating sides, with clear margins from bay
+ *  openings, the gallery cut, the showreel recess and both gates. Spread ≥18
+ *  world units apart so each porthole reads as its own corridor event. */
+export const PORTHOLES: { x: number; side: 1 | -1 }[] = (() => {
+  const clear = (x: number, side: 1 | -1) =>
+    !ROOMS.some((r) => r.side === side && Math.abs(x - r.x) < ALCOVE_OPEN_W / 2 + 1.2) &&
+    !(side === GALLERY_SIDE && Math.abs(x - GALLERY_X) < GALLERY_SPAN / 2 + 1.2) &&
+    !(side === 1 && Math.abs(x - FEATURE_X) < 4.5) &&
+    !GATES.some((g) => Math.abs(x - g.x) < 2.2);
+  const out: { x: number; side: 1 | -1 }[] = [];
+  let side: 1 | -1 = -1; // first blank run is past room 0's far edge (-z)
+  let lastX = -Infinity;
+  const last = ROOMS[ROOMS.length - 1].x + TILE * 2;
+  for (let x = snapToColumn(ROOMS[0].x) + TILE * 3; x <= last && out.length < 4; x += TILE) {
+    if (x - lastX < 18 || !clear(x, side)) continue;
+    out.push({ x, side });
+    lastX = x;
+    side = side === 1 ? -1 : 1;
+  }
+  return out;
+})();
+
+// keyframes of (progress → cameraX); a flat "dwell" band sits at each slot.
 type KF = { p: number; x: number };
 const KEYS: KF[] = [{ p: 0, x: START_X }];
 // Showreel dwell: glide in, hold facing the feature screen, then move on.
 KEYS.push({ p: 0.1, x: FEATURE_CAM_X });
 KEYS.push({ p: 0.17, x: FEATURE_CAM_X });
-ROOMS.forEach((r, i) => {
-  const s = ROOM_LO + i * SLOT;
-  // Wide flat hold = the camera STAYS on each room. Keep these in sync with
-  // focusAt's dwellLo/dwellHi (0.20 / 0.80). The 0.40*SLOT between a room's
-  // leave and the next room's arrive is the visible corridor-travel gap.
-  KEYS.push({ p: s + SLOT * 0.3, x: r.x }); // arrive (dwell on room)
-  KEYS.push({ p: s + SLOT * 0.7, x: r.x }); // leave — wider corridor travel between rooms
-});
+for (let i = 0; i < N_SLOTS; i++) {
+  const s = slotStart(i);
+  const x = i === GALLERY_SLOT ? GALLERY_X : ROOMS[i < GALLERY_SLOT ? i : i - 1].x;
+  // Wide flat hold = the camera STAYS on each slot. Keep these in sync with
+  // slotEase's dwellLo/dwellHi (0.30 / 0.70). The 0.40*SLOT between a slot's
+  // leave and the next slot's arrive is the visible corridor-travel gap.
+  KEYS.push({ p: s + SLOT * 0.3, x }); // arrive (dwell on slot)
+  KEYS.push({ p: s + SLOT * 0.7, x }); // leave — corridor travel between slots
+}
 KEYS.push({ p: 1, x: END_X });
+
+/** Dwell-stop progress values for the mobile hop chevrons: airlock, lobby
+ *  showreel, every dwell slot centre (9 rooms + the gallery), bridge. Derived
+ *  from the same slot math as KEYS so the hops land dead-centre in each hold
+ *  band; the showreel value mirrors its KEYS hold (0.10–0.17). */
+export const STOP_PROGRESSES: number[] = [
+  0,
+  0.135,
+  ...Array.from({ length: N_SLOTS }, (_, i) => slotStart(i) + SLOT / 2),
+  1,
+];
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
@@ -146,36 +235,46 @@ export function cameraXAt(p: number): number {
   return KEYS[KEYS.length - 1].x;
 }
 
+/** Shared dwell-band turn ramp for slot i: 0 → 1 → 0. The turn LEADS arrival —
+ *  full focus is reached `lead` before the camera centres, so the head already
+ *  faces the exhibit as it slides in (fixes "turns too late"). `ramp` is short
+ *  enough to leave ~0.16*SLOT mid-corridor where nothing is focused (you face
+ *  straight down the hall = a real walk between slots). The whole band stays
+ *  inside [s, s+SLOT], so slot windows tile without overlapping. dwellLo/dwellHi
+ *  mirror the KEYS hold band (0.30 / 0.70). */
+function slotEase(p: number, slot: number): number {
+  const s = slotStart(slot);
+  const dwellLo = s + SLOT * 0.3;
+  const dwellHi = s + SLOT * 0.7;
+  const lead = SLOT * 0.06;
+  const ramp = SLOT * 0.16;
+  const fullLo = dwellLo - lead;
+  const fullHi = dwellHi + lead;
+  const inLo = fullLo - ramp;
+  const outHi = fullHi + ramp;
+  if (p < inLo || p > outHi) return 0;
+  let e: number;
+  if (p < fullLo) e = (p - inLo) / ramp;
+  else if (p > fullHi) e = (outHi - p) / ramp;
+  else e = 1;
+  return smooth(Math.max(0, Math.min(1, e)));
+}
+
 /** Which room the camera is focusing, and how strongly (0..1), for the glance.
- *  The turn LEADS the arrival: focus reaches 1 a touch (0.05*SLOT) BEFORE the
- *  camera centres, so the head is already facing the room as it slides in
- *  (fixes the "turns too late" feel). Each room's window tiles its slot exactly
- *  ([s, s+SLOT]) so windows never overlap — important because this returns the
- *  FIRST matching room. dwellLo/dwellHi mirror the KEYS hold band (0.20 / 0.80). */
+ *  Rooms map to slots 0-4 and 6-9 (slot 5 belongs to the observation gallery —
+ *  see galleryFocusAt); windows never overlap, so the first hit wins. */
 export function focusAt(p: number): { room: Room | null; ease: number } {
   for (let i = 0; i < ROOMS.length; i++) {
-    const s = ROOM_LO + i * SLOT;
-    const dwellLo = s + SLOT * 0.3;
-    const dwellHi = s + SLOT * 0.7;
-    // The turn LEADS arrival: full focus is reached `lead` before the camera
-    // centres so the bay is already faced as you slide in (fixes "turns late").
-    // `ramp` is still short enough to leave ~0.16*SLOT mid-corridor where no room
-    // is focused (you face straight down the hall = a real walk between bays).
-    const lead = SLOT * 0.06;
-    const ramp = SLOT * 0.16;
-    const fullLo = dwellLo - lead;
-    const fullHi = dwellHi + lead;
-    const inLo = fullLo - ramp;
-    const outHi = fullHi + ramp;
-    if (p >= inLo && p <= outHi) {
-      let e: number;
-      if (p < fullLo) e = (p - inLo) / ramp;
-      else if (p > fullHi) e = (outHi - p) / ramp;
-      else e = 1;
-      return { room: ROOMS[i], ease: smooth(Math.max(0, Math.min(1, e))) };
-    }
+    const e = slotEase(p, roomSlot(i));
+    if (e > 0) return { room: ROOMS[i], ease: e };
   }
   return { room: null, ease: 0 };
+}
+
+/** How strongly the camera should turn to the observation-gallery glazing
+ *  (0..1) — slot 5's band, same ramp shape as featureFocusAt / room focus. */
+export function galleryFocusAt(p: number): number {
+  return slotEase(p, GALLERY_SLOT);
 }
 
 /** How strongly the camera should turn to face the entrance showreel (0..1).

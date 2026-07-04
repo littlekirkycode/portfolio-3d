@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useThree } from "@react-three/fiber";
-import { AdaptiveDpr, PerformanceMonitor } from "@react-three/drei";
+import { PerformanceMonitor } from "@react-three/drei";
 import { Suspense, useEffect, useState } from "react";
 import * as THREE from "three";
 import type { PerspectiveCamera } from "three";
@@ -11,10 +11,14 @@ import Rig from "./Rig";
 import Corridor from "./Corridor";
 import KitShell from "./KitShell";
 import Walls from "./Walls";
-import Figures from "./Figures";
 import FeatureScreen from "./FeatureScreen";
+import Windows from "./Windows";
+import BulkheadGates from "./BulkheadGates";
+import Lobby from "./Lobby";
+import Drone from "./Drone";
+import Airlock from "./Airlock";
 import Effects from "./Effects";
-import { EYE_Y, MOBILE_Z, HFOV_DESKTOP, HFOV_MOBILE } from "./hallConfig";
+import { EYE_Y, HFOV_DESKTOP, HFOV_MOBILE } from "./hallConfig";
 
 const BG = "#090b14";
 
@@ -59,9 +63,12 @@ export default function Scene() {
   const isMobile = useIsMobile();
   const reduced = useReducedMotion();
 
-  const [dprMax, setDprMax] = useState(isMobile ? 1.5 : 2);
+  // Mobile cap raised 1.5 → 2: phones are ≥3× native, and 1.5 rendered the
+  // canvas-texture panels visibly soft ("mobile looks worse"). The
+  // PerformanceMonitor still steps down under real load.
+  const [dprMax, setDprMax] = useState(2);
   useEffect(() => {
-    setDprMax(isMobile ? 1.5 : 2);
+    setDprMax(2);
   }, [isMobile]);
 
   const [visible, setVisible] = useState(true);
@@ -83,38 +90,59 @@ export default function Scene() {
       }}
       camera={{ position: [0, EYE_Y, 0], fov: 62, near: 0.1, far: 120 }}
       frameloop={visible ? "always" : "never"}
-      onCreated={({ gl }) => {
+      // In-world interactives (bridge comms kiosks, the drone): the canvas
+      // layer is pointer-events:none behind the DOM, so R3F listens on <body>
+      // instead — events bubbling up from ANY DOM element get raycast, no
+      // pointer-events restack needed. eventPrefix MUST be "client": body's
+      // offset coords don't map to the fixed full-viewport canvas, client
+      // coords do. (This module is ssr:false — document exists at render.)
+      eventSource={document.body}
+      eventPrefix="client"
+      onCreated={({ gl, scene }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.25;
+        // Debug/verify hook (screenshot harness scene probes — see Rig's
+        // __rig). NON-ENUMERABLE: dev tooling that walks/serialises window
+        // globals chokes on the scene graph's circular parent/children refs
+        // (QA: "Converting circular structure to JSON" overlay error).
+        Object.defineProperty(window, "__scene", { value: scene, configurable: true });
       }}
     >
       <color attach="background" args={[BG]} />
-      <fogExp2 attach="fog" args={[BG, reduced ? 0.01 : 0.013]} />
+      {/* fog a step BELOW the wall value so distance recedes to black, not grey */}
+      <fogExp2 attach="fog" args={["#06070d", reduced ? 0.01 : 0.013]} />
 
+      {/* PerformanceMonitor alone regulates DPR. AdaptiveDpr (pixelated) also
+          scaled dpr straight to the perf score — every load dip softened the
+          whole canvas then snapped back (QA: "posters sometimes go blurry").
+          Desktop floor 1.25 keeps text legible even under sustained decline. */}
       <PerformanceMonitor
-        onDecline={() => setDprMax((d) => Math.max(1, d - 0.5))}
-        onIncline={() => setDprMax((d) => Math.min(isMobile ? 1.5 : 2, d + 0.25))}
+        onDecline={() => setDprMax((d) => Math.max(isMobile ? 1 : 1.25, d - 0.5))}
+        onIncline={() => setDprMax((d) => Math.min(2, d + 0.25))}
         flipflops={3}
       />
-      <AdaptiveDpr pixelated />
 
-      <ambientLight intensity={0.6} />
-      <hemisphereLight args={["#5a6a8c", "#15161f", 0.85]} />
+      {/* "Dark ship, lit exhibits" — base fill kept low so the bays' own accent
+          lighting carries the exhibits and the kit walls read as moody steel. */}
+      <ambientLight intensity={0.15} />
+      <hemisphereLight args={["#4d5c80", "#0a0b12", 0.35]} />
 
-      <Rig frozen={reduced} zScale={isMobile ? MOBILE_Z : 1} />
+      <Rig frozen={reduced} mobile={isMobile} />
       <FovFit mobile={isMobile} />
 
-      {/* On mobile, squash the world on Z (corridor width) so the side walls sit
-          closer to the props in portrait. X/Y unchanged; desktop scale = 1. */}
-      <group scale={[1, 1, isMobile ? MOBILE_Z : 1]}>
-        <Suspense fallback={null}>
-          <KitShell />
-          <Corridor />
-          <Walls animate={!reduced} mobile={isMobile} />
-          <Figures />
-          <FeatureScreen />
-        </Suspense>
-      </group>
+      {/* Same corridor geometry on every device — mobile framing comes from
+          the Rig's portrait step-in, not from squashing the world. */}
+      <Suspense fallback={null}>
+        <KitShell />
+        <Corridor />
+        <Walls animate={!reduced} mobile={isMobile} />
+        <FeatureScreen />
+        <Windows />
+        <BulkheadGates />
+        <Lobby />
+        <Airlock />
+        <Drone mobile={isMobile} />
+      </Suspense>
 
       {!reduced && <Effects mobile={isMobile} />}
     </Canvas>

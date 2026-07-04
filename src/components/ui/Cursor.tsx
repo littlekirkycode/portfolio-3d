@@ -29,6 +29,16 @@ export default function Cursor() {
   // nested pointerover/out events can't prematurely drop the hover state.
   const hoverDepth = useRef(0);
 
+  // In-WORLD interactives (bridge comms kiosks etc.) can't carry data-cursor —
+  // they announce hover via a window "world-hover" CustomEvent instead.
+  const [worldHover, setWorldHover] = useState(false);
+  useEffect(() => {
+    const onWorldHover = (e: Event) =>
+      setWorldHover((e as CustomEvent).detail === true);
+    window.addEventListener("world-hover", onWorldHover);
+    return () => window.removeEventListener("world-hover", onWorldHover);
+  }, []);
+
   // Track pointer capability reactively so hybrid/convertible devices (and
   // DevTools device-mode) gain/lose the custom cursor when the input changes.
   useEffect(() => {
@@ -122,8 +132,8 @@ export default function Cursor() {
           marginTop: -17,
         }}
         animate={{
-          scale: hovering ? 1.9 : pressed ? 0.7 : 1,
-          opacity: hovering ? 1 : 0.6,
+          scale: hovering || worldHover ? 1.9 : pressed ? 0.7 : 1,
+          opacity: hovering || worldHover ? 1 : 0.6,
         }}
         transition={{ type: "spring", stiffness: 400, damping: 28 }}
       />
@@ -139,7 +149,7 @@ export default function Cursor() {
           marginTop: -3,
         }}
         animate={{
-          scale: hovering ? 0.4 : pressed ? 1.6 : 1,
+          scale: hovering || worldHover ? 0.4 : pressed ? 1.6 : 1,
         }}
         transition={{ type: "spring", stiffness: 600, damping: 30 }}
       />

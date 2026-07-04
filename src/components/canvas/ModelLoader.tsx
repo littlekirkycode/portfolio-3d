@@ -4,6 +4,7 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
+import { clone as cloneWithSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PACK_SCALE } from "./hallConfig";
 import { withBase } from "@/lib/asset";
 
@@ -75,7 +76,15 @@ export function Model({
 }) {
   const { scene } = useGLTF(urlFor(name));
   const obj = useMemo(() => {
-    const c = scene.clone(true);
+    // SkeletonUtils clone, NOT Object3D.clone: several FBX-converted packs
+    // (drone, person-*) are SkinnedMesh rigs, and a plain deep clone leaves the
+    // skin bound to the ORIGINAL (never-updated) bones — the mesh exists in the
+    // graph but never draws (QA: invisible drone with floating nav lights).
+    const c = cloneWithSkeleton(scene) as THREE.Group;
+    c.traverse((o) => {
+      // skinned bounding spheres go stale under our re-scaling — never cull
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh) o.frustumCulled = false;
+    });
     if (upZ) c.rotation.x = -Math.PI / 2;
     c.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(c);

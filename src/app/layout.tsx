@@ -6,6 +6,7 @@ import Grain from "@/components/ui/Grain";
 import Nav from "@/components/ui/Nav";
 import ProgressBar from "@/components/ui/ProgressBar";
 import ProjectLink from "@/components/ui/ProjectLink";
+import MobileStops from "@/components/ui/MobileStops";
 import Cursor from "@/components/ui/Cursor";
 import { SITE } from "@/lib/constants";
 
@@ -58,6 +59,7 @@ export default function RootLayout({
         <Nav />
         <ProgressBar />
         <ProjectLink />
+        <MobileStops />
         <Grain />
         <Cursor />
       </body>

@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { motion, useMotionValue, useSpring } from "motion/react";
 import { SITE } from "@/lib/constants";
+import { fxRefs } from "@/lib/scrollStore";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { useIsMobile } from "@/lib/useIsMobile";
 import SplitText from "@/components/ui/SplitText";
@@ -11,11 +13,22 @@ import SplitText from "@/components/ui/SplitText";
 // per-render/hydration divergence at a year boundary.
 const YEAR = new Date().getFullYear();
 
+type LenisLike = {
+  scrollTo: (target: number, opts?: { immediate?: boolean; duration?: number }) => void;
+};
+
+/** Send keyboard focus back to the top panel after departure. */
+function focusAirlock() {
+  const hero = document.getElementById("hero");
+  if (hero) (hero as HTMLElement).focus({ preventScroll: true });
+}
+
 /**
- * Closing panel. A giant display "Let's talk." sits above a magnetic email
- * button that drifts toward the cursor; socials and a footer line (location +
- * copyright) close the journey. Magnetic pull is disabled on touch / reduced
- * motion.
+ * Closing panel (the BRIDGE). A giant display "Let's talk." sits above a
+ * magnetic email button; below it, the diegetic DEPART control ramps
+ * fxRefs.warp 0→1 (the bridge window's hyperspace streak), flashes a
+ * white-blue overlay and — hidden inside the flash — snaps the scroll back to
+ * the airlock. Reduced motion skips warp/flash for a plain scroll home.
  */
 export default function Contact() {
   const reduced = useReducedMotion();
@@ -41,19 +54,83 @@ export default function Contact() {
     my.set(0);
   };
 
+  /* ── DEPART sequence ─────────────────────────────────────────────────── */
+  const flashRef = useRef<HTMLDivElement>(null);
+  const departing = useRef(false);
+  const rafRef = useRef(0);
+  const timerRef = useRef(0);
+  // The flash must be portaled to <body>: this section sits inside the GSAP
+  // translated track, and a transformed ancestor demotes position:fixed to
+  // ancestor-relative — the overlay would mis-centre and jump with the snap.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Safety: never leave the warp channel hot if we unmount mid-sequence.
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(rafRef.current);
+      window.clearTimeout(timerRef.current);
+      fxRefs.warp = 0;
+    },
+    [],
+  );
+
+  const onDepart = useCallback(() => {
+    if (departing.current) return;
+    const lenis = (window as unknown as { __lenis?: LenisLike }).__lenis;
+
+    if (reduced) {
+      // plain scroll home — no warp, no flash
+      lenis?.scrollTo(0, { immediate: true });
+      fxRefs.warp = 0;
+      focusAirlock();
+      return;
+    }
+
+    departing.current = true;
+    const start = performance.now();
+    const DUR = 900;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / DUR);
+      fxRefs.warp = t * t * (3 - 2 * t); // smooth spring-ish ramp, rAF only
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(step);
+        return;
+      }
+      // warp is at full — flash, and hide the scroll snap inside it
+      const el = flashRef.current;
+      if (el) {
+        el.style.transition = "opacity 90ms ease-in";
+        el.style.opacity = "1";
+      }
+      timerRef.current = window.setTimeout(() => {
+        lenis?.scrollTo(0, { immediate: true });
+        fxRefs.warp = 0;
+        focusAirlock();
+        const el2 = flashRef.current;
+        if (el2) {
+          el2.style.transition = "opacity 300ms ease-out";
+          el2.style.opacity = "0";
+        }
+        departing.current = false;
+      }, 140);
+    };
+    rafRef.current = requestAnimationFrame(step);
+  }, [reduced]);
+
   return (
+    /* md sizing is vh-aware: short landscape windows (~900px) used to pile the
+       depart button, fine print, socials and footer on top of each other. pt
+       clears the fixed nav, pb clears the absolute footer rail, and the
+       heading/gaps scale with vh so the flow column always fits between them. */
     <section
       data-section
       data-label="Contact"
       id="contact"
-      className="relative flex min-h-screen w-full shrink-0 flex-col justify-center gap-12 px-[8vw] py-24 md:h-screen md:w-screen md:py-0"
+      className="relative flex min-h-screen w-full shrink-0 flex-col justify-center gap-12 px-[8vw] py-24 md:h-screen md:w-screen md:gap-[3.5vh] md:py-0 md:pb-[14vh] md:pt-[10vh]"
     >
-      <div className="flex items-center gap-5 font-mono text-[0.7rem] uppercase tracking-[0.35em] text-ink-dim">
-        <span className="text-accent">(04)</span>
-        <span className="h-px w-12 bg-line" aria-hidden />
-        <span>Contact</span>
-      </div>
-
+      {/* No kicker row — nav, progress rail and HUD readout already all say
+          BRIDGE; the finale keeps one statement and two controls, nothing else. */}
       {/* Giant statement */}
       <h2 className="font-display leading-[0.82] tracking-[-0.02em] text-ink">
         <span className="block overflow-hidden">
@@ -63,7 +140,7 @@ export default function Contact() {
             text="Let's"
             stagger={0.04}
             riseEm={0.9}
-            className="block text-[18vw] md:text-[12vw]"
+            className="block text-[18vw] md:text-[min(12vw,16vh)]"
           />
         </span>
         <span className="block overflow-hidden">
@@ -74,23 +151,18 @@ export default function Contact() {
             delay={0.18}
             stagger={0.04}
             riseEm={0.9}
-            className="block pl-[0.04em] text-[18vw] italic text-accent md:text-[12vw]"
+            className="block pl-[0.04em] text-[18vw] italic text-accent md:text-[min(12vw,16vh)]"
           />
         </span>
       </h2>
 
       {/* Magnetic email button + supporting copy */}
-      <div className="flex w-full flex-col gap-12 md:flex-row md:items-end md:justify-between">
-        <div className="flex flex-col gap-8">
-          <p className="relative max-w-md text-base leading-relaxed text-ink-dim">
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -inset-x-5 -inset-y-3 -z-10 rounded-lg bg-gradient-to-r from-bg/70 via-bg/30 to-transparent"
-            />
-            Have a project in mind, or just want to trade ideas? My inbox is
-            open.
-          </p>
-
+      <div className="flex w-full flex-col gap-12 md:flex-row md:items-end md:justify-between md:gap-8">
+        {/* No copy card here — it sat straight over the bridge kiosks and the
+            console row (QA: "the box blocks github linkedin and console").
+            The comms flavour lives IN the world now: the HAIL console centre-
+            bridge fires the same mailto as the button below. */}
+        <div className="flex flex-col gap-8 md:gap-[2.5vh]">
           <motion.a
             ref={btnRef}
             href={`mailto:${SITE.email}`}
@@ -119,46 +191,58 @@ export default function Contact() {
               &rarr;
             </span>
           </motion.a>
+
+          {/* DEPART — spins up the warp streak, flashes, returns to the airlock.
+              No fine print: the button + the flash explain themselves. */}
+          <button
+            type="button"
+            data-cursor
+            onClick={onDepart}
+            className="group flex w-fit items-center gap-3 border border-line bg-bg-elev/40 px-5 py-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ink-dim backdrop-blur-sm transition-colors duration-300 hover:border-accent-2 hover:text-ink"
+          >
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-accent-2 transition-transform duration-300 group-hover:scale-150"
+            />
+            INITIATE DEPARTURE
+            <span
+              aria-hidden
+              className="text-accent-2 transition-transform duration-500 group-hover:translate-x-1"
+            >
+              ↗
+            </span>
+          </button>
         </div>
 
-        {/* Socials */}
-        <nav aria-label="Social links" className="flex flex-col gap-px md:items-end">
-          {SITE.socials.map((s, i) => (
-            <motion.a
-              key={s.label}
-              href={s.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-cursor
-              initial={{ opacity: 0, y: reduced ? 0 : 12 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.6 }}
-              transition={{ duration: 0.6, delay: 0.1 + i * 0.08 }}
-              className="group flex items-center gap-3 border-t border-line py-3 font-mono text-sm uppercase tracking-[0.2em] text-ink-dim transition-colors duration-300 hover:text-ink md:w-56 md:justify-end"
-            >
+        {/* Socials live IN THE WORLD — the two comms kiosks flanking the
+            bridge console (Corridor's SocialTerminal). Assistive tech and
+            crawlers get this hidden equivalent, not an on-screen duplicate. */}
+        <nav aria-label="Social links" className="sr-only">
+          {SITE.socials.map((s) => (
+            <a key={s.label} href={s.href} target="_blank" rel="noopener noreferrer">
               {s.label}
-              <span
-                aria-hidden
-                className="text-accent opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-              >
-                &nearr;
-              </span>
-            </motion.a>
+            </a>
           ))}
         </nav>
       </div>
 
-      {/* Footer line */}
+      {/* Footer — one quiet line: © + the astronaut credit (its CC-BY licence
+          requires attribution; everything else aboard is CC0 Kenney /
+          Quaternius). Location line + hull joke cut, and no gradient scrim:
+          two short mono runs read fine over the dark deck. */}
       <footer className="absolute bottom-[6vh] left-[8vw] right-[8vw] flex items-center justify-between border-t border-line pt-5 font-mono text-[0.65rem] uppercase tracking-[0.3em] text-ink-dim">
-        <span
-          aria-hidden
-          className="pointer-events-none absolute -inset-x-[8vw] -bottom-[6vh] top-[-3vh] -z-10 bg-gradient-to-t from-bg/85 via-bg/40 to-transparent"
-        />
-        <span>{SITE.location}</span>
         <span>
           &copy; {YEAR} {SITE.name}
         </span>
+        <span className="hidden md:inline">ASTRONAUT: PW WU (CC-BY)</span>
       </footer>
+
+      {/* white-blue departure flash (opacity driven imperatively) */}
+      {mounted &&
+        createPortal(
+          <div ref={flashRef} aria-hidden className="depart-flash" />,
+          document.body,
+        )}
     </section>
   );
 }

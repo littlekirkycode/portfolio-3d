@@ -2,8 +2,9 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { SECTIONS, SITE } from "@/lib/constants";
-import { useScrollStore } from "@/lib/scrollStore";
+import { useScrollStore, useShipSection } from "@/lib/scrollStore";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { shipLabel } from "./hud";
 
 /**
  * Fixed top chrome. mix-blend-difference keeps it legible over any background.
@@ -14,7 +15,9 @@ import { useIsMobile } from "@/lib/useIsMobile";
  */
 export default function Nav() {
   const isMobile = useIsMobile();
-  const sectionIndex = useScrollStore((s) => s.sectionIndex);
+  // Display section (not the raw store index): the BRIDGE item lights up when
+  // the camera reaches the bridge, not when the wide DOM panel finally crosses.
+  const sectionIndex = useShipSection();
   const menuOpen = useScrollStore((s) => s.menuOpen);
 
   const go = (index: number) => {
@@ -52,6 +55,7 @@ export default function Nav() {
                   type="button"
                   data-cursor
                   aria-current={active ? "true" : undefined}
+                  aria-label={section.label}
                   onClick={() => go(i)}
                   className="group relative flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em]"
                 >
@@ -70,11 +74,12 @@ export default function Nav() {
                     )}
                   </span>
                   <span
+                    aria-hidden
                     className={`transition-colors duration-300 ${
                       active ? "text-ink" : "text-ink-dim group-hover:text-ink"
                     }`}
                   >
-                    {section.label}
+                    {shipLabel(section.id, section.label)}
                   </span>
                 </button>
               );
@@ -123,6 +128,7 @@ export default function Nav() {
                     type="button"
                     data-cursor
                     aria-current={active ? "true" : undefined}
+                    aria-label={section.label}
                     onClick={() => go(i)}
                     initial={{ opacity: 0, y: 28 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -138,11 +144,12 @@ export default function Nav() {
                       {String(i + 1).padStart(2, "0")}
                     </span>
                     <span
+                      aria-hidden
                       className={`font-display text-5xl leading-none transition-colors ${
                         active ? "text-accent" : "text-ink"
                       }`}
                     >
-                      {section.label}
+                      {shipLabel(section.id, section.label)}
                     </span>
                   </motion.button>
                 );

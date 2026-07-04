@@ -25,6 +25,22 @@ export default function SmoothScrollProvider({
   const pinRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
+  // Swallow the benign "ResizeObserver loop" browser error that window
+  // resizing fires (R3F + Lenis both observe). Left alone, the Next dev
+  // overlay intercepts it and tries to serialise the component tree — which
+  // chokes on the THREE scene graph's circular refs and surfaces as a
+  // "Converting circular structure to JSON" TypeError on every resize.
+  // Dev-only symptom, but noisy enough to guard here.
+  useEffect(() => {
+    const onErr = (e: ErrorEvent) => {
+      if (typeof e.message === "string" && e.message.includes("ResizeObserver loop")) {
+        e.stopImmediatePropagation();
+      }
+    };
+    window.addEventListener("error", onErr, true);
+    return () => window.removeEventListener("error", onErr, true);
+  }, []);
+
   useEffect(() => {
     registerGsap();
 
@@ -51,6 +67,9 @@ export default function SmoothScrollProvider({
     // On mobile there's no pin/translate trigger, so we derive corridor progress
     // straight from Lenis (scroll / limit) here instead of via ScrollTrigger.
     let mobileMode = false;
+    // Vertical [data-section] offsets (mobile only) — drives the section label
+    // in the progress footer, which ScrollTrigger's onUpdate handles on desktop.
+    let mobileSectionTops: number[] = [];
 
     // ── Lenis → velocity ref + drives ScrollTrigger (desktop) / progress (mobile) ──
     lenis.on("scroll", (e: { velocity?: number; scroll?: number; limit?: number; direction?: number }) => {
@@ -60,6 +79,16 @@ export default function SmoothScrollProvider({
         const scroll = e.scroll ?? lenis.scroll ?? 0;
         scrollRefs.progress = limit > 0 ? Math.min(1, Math.max(0, scroll / limit)) : 0;
         if (e.direction === 1 || e.direction === -1) scrollRefs.direction = e.direction;
+        // Section = last panel whose top has crossed the viewport centre.
+        const center = scroll + window.innerHeight / 2;
+        let idx = 0;
+        for (let i = 0; i < mobileSectionTops.length; i++) {
+          if (center >= mobileSectionTops[i]) idx = i;
+        }
+        if (idx !== lastIndex) {
+          lastIndex = idx;
+          setSectionIndex(idx);
+        }
       } else {
         ScrollTrigger.update();
       }
@@ -129,6 +158,13 @@ export default function SmoothScrollProvider({
       mobileMode = true;
       // seed once in case the user hasn't scrolled yet
       scrollRefs.progress = lenis.limit > 0 ? lenis.scroll / lenis.limit : 0;
+      const measure = () => {
+        mobileSectionTops = gsap.utils
+          .toArray<HTMLElement>("[data-section]")
+          .map((el) => el.getBoundingClientRect().top + lenis.scroll);
+      };
+      measure();
+      window.addEventListener("resize", measure);
       setScrollToSection((index: number) => {
         const sections = gsap.utils.toArray<HTMLElement>("[data-section]");
         const el = sections[index];
@@ -137,6 +173,8 @@ export default function SmoothScrollProvider({
       setReady(true);
       return () => {
         mobileMode = false;
+        window.removeEventListener("resize", measure);
+        mobileSectionTops = [];
       };
     });
 

@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { create } from "zustand";
+import { SECTIONS } from "@/lib/constants";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
@@ -33,6 +35,13 @@ export const pointerRefs = {
   y: 0,
 };
 
+/** Cross-component FX channels (plain refs, read in useFrame — same contract as
+ *  scrollRefs). `warp` 0→1 drives the hyperspace star-streak on the bridge
+ *  window; written by the DOM DEPART control, read by the bridge shader. */
+export const fxRefs = {
+  warp: 0,
+};
+
 type ScrollState = {
   /** Index into SECTIONS of the currently-centered section. */
   sectionIndex: number;
@@ -51,6 +60,40 @@ type ScrollState = {
   toggleMenu: () => void;
   setScrollToSection: (fn: (index: number) => void) => void;
 };
+
+/** Progress past which the 3D bridge fills the frame. The DOM contact panel's
+ *  offsetLeft only crosses the viewport centre at p ≈ 0.95 (the work spacer is
+ *  ~10 screens wide), so the store's sectionIndex flips far too late for the
+ *  HUD — the camera is already parked on the bridge from ~0.86. */
+const BRIDGE_ENTER_P = 0.86;
+
+/**
+ * Display section for the HUD chrome (nav dots, chapter rail, readout strip).
+ * Identical to the store's coarse sectionIndex except the FINAL section (the
+ * bridge) activates when the CAMERA arrives — a scroll-progress threshold —
+ * instead of waiting for the DOM panel to cross the viewport centre. Coarse
+ * state only: the rAF loop calls setState exactly once per threshold crossing,
+ * never per frame (see the frame-data contract above).
+ */
+export function useShipSection(): number {
+  const sectionIndex = useScrollStore((s) => s.sectionIndex);
+  const [atBridge, setAtBridge] = useState(false);
+  useEffect(() => {
+    let raf = 0;
+    let last: boolean | null = null;
+    const tick = () => {
+      const now = scrollRefs.progress > BRIDGE_ENTER_P;
+      if (now !== last) {
+        last = now;
+        setAtBridge(now);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return atBridge ? SECTIONS.length - 1 : sectionIndex;
+}
 
 export const useScrollStore = create<ScrollState>((set) => ({
   sectionIndex: 0,

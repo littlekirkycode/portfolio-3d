@@ -60,9 +60,12 @@ const NOISE_CHUNK = /* glsl */ `
 `;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   BACKGROUND — far backdrop dome.
-   Flowing fbm nebula that shifts hue with scroll progress, lit by two brand
-   accents, vignetted toward the rim so it reads as deep space, not a flat wall.
+   BACKGROUND — deep space through the observation-bridge window.
+   Three parallax star layers (jittered grid, per-star size + twinkle) over
+   chromatic blue/violet/magenta fbm nebula clouds, all drifting slowly
+   with uTime + a touch of pointer/scroll parallax. Mostly black — it must read
+   unmistakably as SPACE, not marble. Rendered toneMapped:false; star peaks sit
+   just above the bloom threshold for a gentle glint.
    ───────────────────────────────────────────────────────────────────────── */
 export const backgroundVertex = /* glsl */ `
   varying vec2 vUv;
@@ -84,44 +87,76 @@ export const backgroundFragment = /* glsl */ `
 
   ${NOISE_CHUNK}
 
+  float hash21(vec2 p){
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  // One star layer: jittered grid; each occupied cell gets a star with its own
+  // position, size and twinkle phase/rate. density = fraction of lit cells.
+  float stars(vec2 uv, float scale, float density, float t){
+    vec2 g = uv * scale;
+    vec2 id = floor(g);
+    vec2 f = fract(g) - 0.5;
+    float rnd = hash21(id);
+    if(rnd > density) return 0.0;
+    vec2 off = (vec2(hash21(id + 3.7), hash21(id + 9.1)) - 0.5) * 0.7;
+    float d = length(f - off);
+    float size = mix(0.03, 0.10, hash21(id + 5.3));
+    float star = smoothstep(size, 0.0, d);
+    float tw = 0.55 + 0.45 * sin(t * (0.8 + 3.0 * rnd / density) + rnd * 40.0);
+    return star * tw;
+  }
+
   void main(){
     vec2 uv = vUv;
 
-    // Drift the noise field sideways with scroll so the backdrop "travels".
-    vec2 p = uv * 3.0;
-    p.x += uProgress * 4.0;
-    p += uMouse * 0.15;
+    // The bridge window is ~2:1 — equalise so stars stay round, not stretched.
+    vec2 suv = (uv - 0.5) * vec2(2.05, 1.0);
 
-    float t = uTime * 0.04;
-    vec2 q = vec2(fbm(p + t), fbm(p + vec2(5.2, 1.3) - t));
-    float n = fbm(p + q * 1.6 + t * 0.5);
-    n = smoothstep(-0.6, 0.9, n);
+    float t = uTime;
 
-    // Brand palette.
-    vec3 bg      = vec3(0.027, 0.027, 0.039); // #07070a
-    vec3 accent  = vec3(1.000, 0.361, 0.220); // #ff5c38
-    vec3 accent2 = vec3(0.302, 0.424, 0.980); // #4d6cfa
-    vec3 glow    = vec3(1.000, 0.478, 0.302); // #ff7a4d
+    // Slow drift, plus a whisper of pointer/scroll parallax. Near layers move
+    // more than far ones -> depth.
+    vec2 drift = vec2(t * 0.006, t * 0.0022);
+    vec2 par = uMouse * 0.012 + vec2(uProgress * 0.05, 0.0);
 
-    // Hue traverses orange -> indigo across the journey for narrative cohesion.
-    float hue = clamp(uProgress, 0.0, 1.0);
-    vec3 tint = mix(accent, accent2, smoothstep(0.15, 0.85, hue));
-    tint = mix(tint, glow, 0.25 + 0.25 * sin(uTime * 0.1));
+    float s1 = stars(suv + drift * 0.5 + par * 0.4, 22.0, 0.10, t);        // far, faint
+    float s2 = stars(suv + drift + par * 0.7 + 3.1, 12.0, 0.14, t);        // mid
+    float s3 = stars(suv + drift * 1.8 + par + 7.7, 6.0, 0.10, t * 0.7);   // near, few, big
 
-    // Nebula body sits just above the near-black base, kept subtle.
-    vec3 col = bg;
-    col += tint * pow(n, 2.4) * 0.55;
+    // Blue-violet nebula clouds behind the stars — deliberately CHROMATIC so
+    // the window reads as deep space, not smoke: deep blue + violet fields,
+    // with a magenta core where the two overlap.
+    vec2 np = suv * 1.6 + vec2(t * 0.008, 0.0) + uMouse * 0.03;
+    float n1 = fbm(np);
+    float n2 = fbm(np * 0.55 + vec2(4.7, 2.3) - t * 0.005);
+    vec3 neb1 = vec3(0.110, 0.200, 0.560); // deep blue
+    vec3 neb2 = vec3(0.400, 0.190, 0.640); // violet
+    vec3 neb3 = vec3(0.640, 0.200, 0.500); // magenta core
 
-    // A faint secondary band of the opposite accent for depth contrast.
-    float band = fbm(p * 0.6 - t * 0.3);
-    col += mix(accent2, accent, hue) * smoothstep(0.4, 1.0, band) * 0.08;
+    float c1 = smoothstep(0.05, 0.95, n1);
+    float c2 = smoothstep(0.25, 1.05, n2);
 
-    // Radial vignette toward the dome rim -> sense of an enclosing void.
-    float vig = smoothstep(1.15, 0.15, length(uv - 0.5) * 1.7);
-    col *= mix(0.35, 1.0, vig);
+    vec3 col = vec3(0.004, 0.006, 0.014);  // deep-space base — near black
+    // Weights tuned so the space-read lands from MID-CORRIDOR (~25 units out),
+    // not only at the contact dwell close-up.
+    col += neb1 * c1 * 0.38;
+    col += neb2 * c2 * 0.28;
+    col += neb3 * c1 * c2 * 0.40;
 
-    // Velocity adds a brief energetic lift to the glow on fast scrolls.
-    col += glow * abs(uVelocity) * 0.08 * pow(n, 3.0);
+    // Star colours: far layer cool blue, near layer warm white.
+    col += vec3(0.55, 0.65, 0.85) * s1 * 0.55;
+    col += vec3(0.85, 0.90, 1.00) * s2 * 1.00;
+    col += vec3(1.00, 0.97, 0.92) * s3 * 1.40;
+
+    // Fast scrolls give the clouds a brief energetic lift.
+    col += neb2 * abs(uVelocity) * 0.05;
+
+    // Soft vignette toward the window frame -> the void recedes at the edges.
+    float vig = smoothstep(1.25, 0.35, length((uv - 0.5) * vec2(1.6, 2.0)));
+    col *= mix(0.55, 1.0, vig);
 
     gl_FragColor = vec4(col, 1.0);
     #include <colorspace_fragment>
@@ -385,7 +420,12 @@ export const screenFragment = /* glsl */ `
     // CRT artefacts scale with uCrt (≈0 on phones).
     col *= mix(1.0, 0.965 + 0.035 * sin(uv.y * 300.0), uCrt);
     col *= mix(1.0, 0.99 + 0.01 * sin(uTime * 4.0), uCrt);
-    col += (rand(uv + fract(uTime * 0.5)) - 0.5) * 0.02 * uCrt;
+    // NO per-pixel grain here. A ±0.002 rand() term — far below perception —
+    // rendered as DENSE WHITE SPECKLE over dark screenshots on real GPUs
+    // (QA: "white spots all over the posters"; empirically bisected to this
+    // one term, mechanism driver-side). Scanlines above carry the CRT feel;
+    // the poster canvases also bake their own grain sheet.
+    col = max(col, vec3(0.0));
     // Glass vignette (kept subtle on phones for a screen-edge falloff).
     float vig = smoothstep(1.2, 0.35, length(vUv - 0.5) * 1.4);
     col *= mix(0.82, 1.06, vig);
