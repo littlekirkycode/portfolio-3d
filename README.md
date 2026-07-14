@@ -35,6 +35,37 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## Analytics (PostHog — off by default)
+
+Analytics compile to a no-op unless a key is present at build time:
+`src/lib/analytics.ts` only loads `posthog-js` (dynamic import — the chunk is
+never fetched otherwise) when `NEXT_PUBLIC_POSTHOG_KEY` is non-empty, and
+never for visitors with Do Not Track enabled. With no key set — the default —
+there are zero analytics network calls.
+
+To enable:
+
+1. Create a [PostHog](https://posthog.com) project and copy its API key.
+2. Add the key as a repository secret (e.g. `POSTHOG_KEY`), then pass it to the
+   build job in `.github/workflows/deploy.yml`:
+
+   ```yaml
+   jobs:
+     build:
+       env:
+         NEXT_PUBLIC_BASE_PATH: /portfolio-3d
+         NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+         # optional — defaults to https://us.i.posthog.com
+         # NEXT_PUBLIC_POSTHOG_HOST: https://eu.i.posthog.com
+   ```
+
+   (Locally: `NEXT_PUBLIC_POSTHOG_KEY=phc_... npm run dev`.)
+
+Tracked events: `bay_focused` (room id + dwell ms, on leaving a bay),
+`max_progress` (furthest corridor progress, beaconed on page hide),
+`project_link_clicked`, `dossier_opened`, plus `depart_pressed` /
+`sound_toggled` / `drone_poked` via the exported `track()` API.
+
 ## Asset credits
 
 - Corridor kit + props: [Kenney](https://kenney.nl) (CC0) and [Quaternius](https://quaternius.com) (CC0), incl. the UNIT-07 escort bot ("Robot Enemy Flying", Ultimate Space Kit).

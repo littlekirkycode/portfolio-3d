@@ -8,6 +8,7 @@ import ProgressBar from "@/components/ui/ProgressBar";
 import ProjectLink from "@/components/ui/ProjectLink";
 import MobileStops from "@/components/ui/MobileStops";
 import Cursor from "@/components/ui/Cursor";
+import AnalyticsProvider from "@/components/providers/AnalyticsProvider";
 import PreloadResources from "./preload-resources";
 import { SITE } from "@/lib/constants";
 
@@ -99,6 +100,8 @@ export default function RootLayout({
         <MobileStops />
         <Grain />
         <Cursor />
+        {/* No-op unless NEXT_PUBLIC_POSTHOG_KEY is set at build (see README). */}
+        <AnalyticsProvider />
       </body>
     </html>
   );

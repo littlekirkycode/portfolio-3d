@@ -48,6 +48,18 @@ export type RoomTheme =
   | "defence"
   | "trophy";
 
+/** Case-study narrative for the DOM dossier overlay (finding 43). */
+export type ProjectDossier = {
+  /** What was broken / why the product needed to exist. */
+  problem: string;
+  /** What was engineered — architecture, stack, the hard parts. */
+  build: string;
+  /** What happened — traction, metrics, lessons. */
+  outcome: string;
+  /** Overlay screenshots; defaults to [image, ...gallery] when omitted. */
+  shots?: string[];
+};
+
 export type Project = {
   id: string;
   index: string;
@@ -67,6 +79,8 @@ export type Project = {
   image?: string;
   /** Extra screenshots — the screen cycles through these as a slideshow. */
   gallery?: string[];
+  /** Problem / build / outcome case study — powers the "OPEN DOSSIER" overlay. */
+  dossier?: ProjectDossier;
 };
 
 export const PROJECTS: Project[] = [
@@ -94,6 +108,15 @@ export const PROJECTS: Project[] = [
       "/images/projects/selfquest/gallery-3.jpg",
       "/images/projects/selfquest/gallery-4.jpg",
     ],
+    // DRAFT copy — James to review/rewrite
+    dossier: {
+      problem:
+        "Most fitness apps assume you're already motivated — they track workouts but do nothing to make you want the next one, so people quit the gym and the app in the same week.",
+      build:
+        "Solo-built end to end: a Flutter client with a full game layer (quests, XP, levels, streaks) over the workout tracker, backed by a C#/.NET API on Azure. Designed the progression economy, the content pipeline, and the growth loop — 72K TikTok followers drove install spikes the backend had to absorb.",
+      outcome:
+        "1.3M+ downloads and 100K daily active users, bootstrapped with zero paid acquisition, featured by TechTudo. The game layer is the retention engine: the workout became the thing users log in to finish.",
+    },
   },
   {
     id: "selfaware",
@@ -117,6 +140,15 @@ export const PROJECTS: Project[] = [
       "/images/projects/selfaware/gallery-4.jpg",
       "/images/projects/selfaware/gallery-5.jpg",
     ],
+    // DRAFT copy — James to review/rewrite
+    dossier: {
+      problem:
+        "AI assistants forget you between sessions. A life OS only works if the assistant actually knows your life — goals, habits, history — and can act on it, not just chat about it.",
+      build:
+        "React Native app around an agentic AI core: retrieval-augmented memory over the user's own data in Supabase, OpenAI models orchestrated with tool-calling, and token-level streaming so the concierge answers in real time instead of in paragraphs-later.",
+      outcome:
+        "A working agentic life OS — the assistant plans, remembers, and follows up across sessions. The RAG-memory + streaming architecture became the template reused for Nuremi's mapped concierge.",
+    },
   },
   {
     id: "selfgrow",
@@ -140,6 +172,15 @@ export const PROJECTS: Project[] = [
       "/images/projects/selfgrow/gallery-4.jpg",
       "/images/projects/selfgrow/gallery-5.jpg",
     ],
+    // DRAFT copy — James to review/rewrite
+    dossier: {
+      problem:
+        "Breaking a habit fails in private: willpower apps relapse with the user because nothing outside the phone holds them accountable — and most quietly assume a permanent network connection.",
+      build:
+        "Native SwiftUI app, offline-first by design: local persistence is the source of truth, syncing to Supabase when a connection returns. Social accountability is the core mechanic — group challenges, shared streaks, and check-ins with the people who keep you honest.",
+      outcome:
+        "Shipped on iOS as the third product in the Self platform. The offline-first sync model means a moment of weakness is always captured — a log never waits on a network.",
+    },
   },
   {
     id: "nuremi",
@@ -154,6 +195,15 @@ export const PROJECTS: Project[] = [
     href: "#",
     kind: "poster",
     theme: "map",
+    // DRAFT copy — James to review/rewrite (no screenshots yet — poster project)
+    dossier: {
+      problem:
+        "Recommendation apps answer \"what's good?\" with a list. The real question is spatial: what's good near me, right now, for what I'm actually trying to do?",
+      build:
+        "As lead engineer & consultant: a React Native concierge fusing an AI assistant with a live interactive map — Supabase geo queries feeding an agentic layer that turns \"find me a quiet café for a meeting\" into pins on the world around you.",
+      outcome:
+        "Delivered as a consulting engagement (2025–2026). Proved the SelfAware memory/streaming stack out in a second product, this time anchored to place instead of habit.",
+    },
   },
   {
     id: "xuabelle",
@@ -167,6 +217,15 @@ export const PROJECTS: Project[] = [
     href: "https://xuabelle.vercel.app/",
     kind: "poster",
     theme: "jewellery",
+    // DRAFT copy — James to review/rewrite (no screenshots yet — poster project)
+    dossier: {
+      problem:
+        "Jewellery sells on feel, and most storefront templates bury it under clutter. The brief: an editorial storefront that loads fast and lets the pieces breathe.",
+      build:
+        "A concept storefront for the web — editorial layout, restrained type, and a performance budget that keeps the imagery the star. Built plain and fast, deployed on Vercel.",
+      outcome:
+        "Live at xuabelle.vercel.app — the range proof: the same engineer who ships consumer mobile apps at scale can deliver polished, editorial web.",
+    },
   },
 ];
 
