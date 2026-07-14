@@ -145,7 +145,13 @@ export default function HudReadout() {
         // the chip just sits a step higher, above the flowing footer.
         // flex-wrap: three chips can two-row on narrow phones instead of
         // spilling off the left edge.
-        className={`pointer-events-none fixed bottom-24 right-[8vw] z-40 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 transition-transform duration-500 ease-out desktop:bottom-12 ${
+        // Mobile bottom is calc(6vh + 4.5rem) (S2): ProjectLink's pill row is
+        // fixed at bottom-[6vh] and ~60px tall, so anchoring the (bottom-
+        // aligned, upward-wrapping) chip rows 72px above the pills' anchor
+        // keeps a ≥12px gap at every viewport height — at 390x844 the wrapped
+        // CAPTURE chip used to overlap the pill row by ~14px. Desktop is
+        // untouched (desktop:bottom-12 wins there).
+        className={`pointer-events-none fixed bottom-[calc(6vh+4.5rem)] right-[8vw] z-40 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 transition-transform duration-500 ease-out desktop:bottom-12 ${
           onBridge ? "desktop:-translate-y-24" : ""
         }`}
       >

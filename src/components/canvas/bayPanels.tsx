@@ -235,7 +235,9 @@ export function RoomLabel({ room }: { room: Room }) {
       ctx.font = `700 118px ${ser}`;
       ctx.fillStyle = room.accent;
       ctx.shadowColor = room.accent;
-      ctx.shadowBlur = 42;
+      // R6: shadowBlur is CTM-exempt (backing-store pixels) — compensate for
+      // useTextTexture's mobile 0.5x transform so the halo scales with the text.
+      ctx.shadowBlur = 42 * (ctx.getTransform().a || 1);
       ctx.fillText(label, w / 2, h / 2);
       ctx.fillText(label, w / 2, h / 2); // second stamp deepens the halo
       ctx.shadowBlur = 0;

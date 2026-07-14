@@ -49,7 +49,11 @@ export default function Nav() {
       } else {
         // autoAlpha reveals the glow only once it has real coordinates — it
         // starts `invisible` so SSR/first paint never shows it un-placed.
-        gsap.set(glow, { x, y, autoAlpha: 1 });
+        // overwrite "auto" (R13): a resize during the 0.45s hop must KILL the
+        // in-flight tween — a plain set writes once, then the still-running
+        // hop re-interpolates toward its pre-resize target every tick and
+        // parks the glow detached from the active dot.
+        gsap.set(glow, { x, y, autoAlpha: 1, overwrite: "auto" });
       }
     };
     place(glowPlaced.current);
@@ -174,7 +178,11 @@ export default function Nav() {
                   transitionDelay: showMenu ? `${0.08 + i * 0.07}s` : "0s",
                   transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
                 }}
-                className={`flex items-baseline gap-4 py-1 text-left transition-[opacity,transform] duration-500 ${
+                // R10: transition `translate`, not `transform` — Tailwind v4's
+                // translate-y-* utilities set the independent CSS `translate`
+                // property, so with `transform` in the list the 28px rise
+                // snapped instantly (fade-only enter, visible teleport on close).
+                className={`flex items-baseline gap-4 py-1 text-left transition-[opacity,translate] duration-500 ${
                   showMenu ? "translate-y-0 opacity-100" : "translate-y-7 opacity-0"
                 }`}
               >

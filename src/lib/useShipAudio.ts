@@ -118,9 +118,17 @@ function playBoom(): void {
 let riserActive = false;
 
 /** DEPART warp riser (finding 44): sawtooth + looped noise through a lowpass
- *  whose frequency/gain TRACK fxRefs.warp (Contact ramps it 0→1 over ~900ms)
- *  in a short rAF loop, ending in the boom at the white flash. Call from the
- *  DEPART handler; self-cleans if the ramp is aborted or sound is muted. */
+ *  sweep matched to Contact's fxRefs.warp ramp (0→1 over ~900ms), ending in
+ *  the boom at the white flash. Call from the DEPART handler; self-cleans if
+ *  the ramp is aborted or sound is muted.
+ *
+ *  R14: the ENTIRE ramp — filter sweep, envelope, and both source.stop()s —
+ *  is scheduled on the AUDIO clock up front, so completion never depends on
+ *  requestAnimationFrame (rAF freezes in hidden tabs while WebAudio keeps
+ *  rendering; the riser used to drone at ~4x the engine hum for as long as
+ *  the tab stayed hidden). The rAF loop below is only a WATCHER for early
+ *  outcomes (boom at the flash frame, abort, mute), and a visibilitychange
+ *  listener stops the riser the instant the tab hides, belt-and-braces. */
 export function playWarpRiser(): void {
   const g = audio.graph;
   if (!g || !audio.on || riserActive) return;
@@ -143,29 +151,54 @@ export function playWarpRiser(): void {
     noise.connect(lp);
     lp.connect(env);
     env.connect(g.master);
+
+    // Pre-scheduled ramp (mirrors Contact's 900ms warp ramp) + guaranteed
+    // shutdown: even if no JS runs again, the envelope closes and both
+    // sources stop at t0 + RAMP + 0.4 on the audio thread.
+    const RAMP = 0.9;
+    const t0 = ctx.currentTime;
+    lp.frequency.setValueAtTime(160, t0);
+    lp.frequency.linearRampToValueAtTime(3760, t0 + RAMP);
+    env.gain.setValueAtTime(0, t0);
+    env.gain.linearRampToValueAtTime(0.12, t0 + RAMP);
+    env.gain.linearRampToValueAtTime(0, t0 + RAMP + 0.3);
+    saw.frequency.setValueAtTime(46, t0);
+    saw.frequency.linearRampToValueAtTime(114, t0 + RAMP);
     saw.start();
     noise.start();
+    saw.stop(t0 + RAMP + 0.4);
+    noise.stop(t0 + RAMP + 0.4);
 
     const started = performance.now();
+    let ended = false;
     const stop = (boom: boolean) => {
+      if (ended) return;
+      ended = true;
       riserActive = false;
+      document.removeEventListener("visibilitychange", onHidden);
       try {
         const now = ctx.currentTime;
         env.gain.cancelScheduledValues(now);
         env.gain.setValueAtTime(env.gain.value, now);
         env.gain.linearRampToValueAtTime(0, now + (boom ? 0.05 : 0.25));
+        // A later stop() call REPLACES the pre-scheduled stop time (spec).
         saw.stop(now + 0.3);
         noise.stop(now + 0.3);
       } catch {}
       if (boom) playBoom();
     };
+    // Natural end of the pre-scheduled window (e.g. tab hidden the whole
+    // time): release the latch/listener so the next DEPART can play.
+    saw.onended = () => stop(false);
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") stop(false);
+    };
+    document.addEventListener("visibilitychange", onHidden);
+
     const tick = () => {
+      if (ended) return;
       if (!audio.on) return stop(false); // muted mid-ramp → fade, no boom
       const w = Math.max(0, Math.min(1, fxRefs.warp));
-      const now = ctx.currentTime;
-      lp.frequency.setTargetAtTime(160 + w * w * 3600, now, 0.03);
-      env.gain.setTargetAtTime(w * 0.12, now, 0.05);
-      saw.frequency.setTargetAtTime(46 + w * 68, now, 0.05);
       if (w >= 0.999) return stop(true); // flash frame — the boom
       // Contact zeroes warp on unmount/abort; hard timeout as a backstop.
       const elapsed = performance.now() - started;

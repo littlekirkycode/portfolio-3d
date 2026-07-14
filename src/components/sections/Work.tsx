@@ -61,11 +61,6 @@ export default function Work() {
                 <li key={t}>{t}</li>
               ))}
             </ul>
-            {project.href && project.href !== "#" && (
-              <a href={project.href} className="pointer-events-auto">
-                Visit {project.title}
-              </a>
-            )}
           </article>
         ))}
 
@@ -120,6 +115,28 @@ export default function Work() {
           </ul>
         </article>
       </div>
+
+      {/* The two REAL project links are keyboard tab stops, so they cannot
+          live inside the clipped mirror above — the container's overflow
+          swallowed their :focus-visible outline entirely (WCAG 2.4.7, R11).
+          Same per-link treatment as Contact's socials: each link is its own
+          sr-only element that un-clips into a HUD chip while focus-visible.
+          Positioned near the panel's top-left — on desktop the focusin
+          handler has just parked the camera at this panel's start, and on
+          mobile the browser scrolls the (now visible) chip into view. */}
+      <nav aria-label="Project links">
+        {PROJECTS.filter((p) => p.href && p.href !== "#").map((p) => (
+          <a
+            key={p.id}
+            href={p.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="sr-only pointer-events-auto focus-visible:left-[8vw] focus-visible:top-[22vh] focus-visible:z-50 focus-visible:m-0 focus-visible:h-auto focus-visible:w-auto focus-visible:overflow-visible focus-visible:[clip-path:none] focus-visible:border focus-visible:border-accent focus-visible:bg-bg-elev/90 focus-visible:px-4 focus-visible:py-2 focus-visible:font-mono focus-visible:text-[11px] focus-visible:uppercase focus-visible:tracking-[0.22em] focus-visible:text-ink focus-visible:backdrop-blur-md"
+          >
+            Visit {p.title}
+          </a>
+        ))}
+      </nav>
     </section>
   );
 }

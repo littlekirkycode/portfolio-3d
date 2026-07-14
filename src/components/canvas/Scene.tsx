@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useThree } from "@react-three/fiber";
-import { PerformanceMonitor } from "@react-three/drei";
+import { PerformanceMonitor, useProgress } from "@react-three/drei";
 import { Suspense, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PerspectiveCamera } from "three";
@@ -38,6 +38,41 @@ const BG = "#090b14";
  * horizontal fov stays roughly constant (~the desktop 62°). Reacts to
  * mobile/resize because it runs inside the Canvas against the live camera.
  */
+/**
+ * Photo-mode registration (finding 47). Lives in a child component — NOT in
+ * Canvas onCreated — so React gives us a symmetric cleanup: when the Canvas
+ * unmounts (e.g. SceneErrorBoundary tears the 3D layer down after a mid-
+ * session asset rejection), registerCapture(null) fires and the HUD's CAPTURE
+ * chip withdraws instead of staying armed against a disposed renderer.
+ * Mirrors Effects' null-ref composer unregistration.
+ */
+function CaptureBridge() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  useEffect(() => {
+    // Render ONE fresh frame — through the composer when the post chain is
+    // mounted (a bare gl.render would strip bloom/vignette), else directly —
+    // then read the canvas back. preserveDrawingBuffer stays false: toBlob
+    // snapshots at call time, in the same task as the render, before the
+    // buffer is cleared.
+    registerCapture(async () => {
+      try {
+        const composer = getComposer();
+        if (composer) composer.render();
+        else gl.render(scene, camera);
+        return await new Promise<Blob | null>((resolve) =>
+          gl.domElement.toBlob((b) => resolve(b), "image/png"),
+        );
+      } catch {
+        return null;
+      }
+    });
+    return () => registerCapture(null);
+  }, [gl, scene, camera]);
+  return null;
+}
+
 function FovFit({ mobile }: { mobile: boolean }) {
   const camera = useThree((s) => s.camera) as PerspectiveCamera;
   const size = useThree((s) => s.size);
@@ -113,17 +148,58 @@ export default function Scene() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  // Stage the non-critical GLB preloads: the shell pieces (kit-wall/kit-floor)
-  // warm up at ModelLoader module scope; the other ~30 models wait for browser
-  // idle so they never contend with the shell + scene chunk on a cold load.
-  // Components that suspend on a model before idle still fetch it on demand.
+  // Stage the non-critical world strictly BEHIND the shell (R0). The old
+  // requestIdleCallback trigger measured main-thread idle, not network: on a
+  // slow cold load it fired within milliseconds of chunk eval — while
+  // kit-wall/kit-floor/colormap were still streaming — so the ~1.1 MB prop
+  // wave fused with the shell wave in THREE.DefaultLoadingManager, starving
+  // the shell AND holding the BootOverlay (keyed on manager quiescence) up
+  // until the LAST asset landed. Now both the deferred preloads and the
+  // prop-consuming subtrees below wait for the manager's FIRST active→false
+  // edge (drei's useProgress store mirrors the DefaultLoadingManager), i.e.
+  // for the shell wave to clear. ~3s fallback for the pathological session
+  // where the manager never activates at all, re-armed while a wave is still
+  // visibly in flight so a slow shell is never cut in on.
+  const [shellReady, setShellReady] = useState(false);
   useEffect(() => {
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(() => preloadDeferredModels());
-      return () => window.cancelIdleCallback(id);
+    let done = false;
+    let unsub: (() => void) | null = null;
+    let fallback = 0;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      unsub?.();
+      window.clearTimeout(fallback);
+      setShellReady(true);
+      preloadDeferredModels();
+    };
+    const snap = useProgress.getState();
+    if (!snap.active && snap.loaded > 0) {
+      // The shell wave already came and went before this effect ran.
+      finish();
+      return;
     }
-    const t = window.setTimeout(preloadDeferredModels, 200); // Safari < 18
-    return () => window.clearTimeout(t);
+    let everActive = snap.active;
+    unsub = useProgress.subscribe((s) => {
+      if (s.active) {
+        everActive = true;
+        return;
+      }
+      if (everActive) finish();
+    });
+    const arm = () => {
+      fallback = window.setTimeout(() => {
+        if (done) return;
+        if (useProgress.getState().active) arm(); // shell mid-flight — hold
+        else finish();
+      }, 3000);
+    };
+    arm();
+    return () => {
+      done = true;
+      unsub?.();
+      window.clearTimeout(fallback);
+    };
   }, []);
 
   return (
@@ -148,23 +224,7 @@ export default function Scene() {
       onCreated={({ gl, scene, camera, invalidate }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.25;
-        // Photo mode (finding 47): render ONE fresh frame — through the
-        // composer when the post chain is mounted (a bare gl.render would
-        // strip bloom/vignette), else directly — then read the canvas back.
-        // preserveDrawingBuffer stays false: toBlob snapshots at call time,
-        // in the same task as the render, before the buffer is cleared.
-        registerCapture(async () => {
-          try {
-            const composer = getComposer();
-            if (composer) composer.render();
-            else gl.render(scene, camera);
-            return await new Promise<Blob | null>((resolve) =>
-              gl.domElement.toBlob((b) => resolve(b), "image/png"),
-            );
-          } catch {
-            return null;
-          }
-        });
+        // Photo mode lives in <CaptureBridge/> (symmetric register/unregister).
         // Context-loss resilience (finding 28): preventDefault signals the
         // browser we can handle a restore (common under mobile-Safari memory
         // pressure); on restore, poke the frameloop so rendering resumes
@@ -197,7 +257,15 @@ export default function Scene() {
           else setDprMax(Math.max(floor, dprMaxRef.current - 0.5));
         }}
         onIncline={() => setDprMax((d) => Math.min(2, d + 0.25))}
-        flipflops={3}
+        // R1: effectively immortal. drei counts EVERY incline/decline event
+        // against flipflops — not direction CHANGES — and permanently stops
+        // sampling once exceeded. At a locked refresh rate the monitor fires
+        // a no-op onIncline every ~2.5s, so flipflops={3} killed it ~10s into
+        // the session and the degrade-later path (thermal throttle → decline
+        // → dprMax floor → autoLite) could never fire. Infinity keeps the
+        // sampler alive for the whole session; the callbacks above are
+        // already idempotent at their caps so immortality costs nothing.
+        flipflops={Infinity}
       />
 
       {/* "Dark ship, lit exhibits" — base fill kept low so the bays' own accent
@@ -207,6 +275,7 @@ export default function Scene() {
 
       <Rig frozen={reduced} mobile={isMobile} />
       <FovFit mobile={isMobile} />
+      <CaptureBridge />
 
       {/* Same corridor geometry on every device — mobile framing comes from
           the Rig's portrait step-in, not from squashing the world.
@@ -214,9 +283,13 @@ export default function Scene() {
           Suspense is SPLIT so the world streams in front-to-back instead of
           all-or-nothing: the shell boundary resolves on just kit-wall +
           kit-floor (~15 KB with colormap.png), then each content group pops
-          in as its own assets land. The Airlock — the p=0 hero — is outside
-          Suspense entirely: it never suspends (all CanvasTexture), so the
-          docking door renders on the canvas's first frame. */}
+          in as its own assets land. The content groups are additionally
+          gated on shellReady (R0): mounting them any earlier starts their
+          useGLTF fetches at first render, which is exactly the shell-wave
+          bandwidth contention ModelLoader's staging exists to prevent. The
+          Airlock — the p=0 hero — is outside Suspense entirely: it never
+          suspends (all CanvasTexture), so the docking door renders on the
+          canvas's first frame. */}
       <Suspense fallback={null}>
         {/* corridor shell: gates the first paint, so keep it models-light.
             Corridor + BulkheadGates are procedural (never suspend) and ride
@@ -225,22 +298,26 @@ export default function Scene() {
         <Corridor />
         <BulkheadGates />
       </Suspense>
-      <Suspense fallback={null}>
-        <Walls animate={!reduced} mobile={isMobile} />
-      </Suspense>
-      <Suspense fallback={null}>
-        <FeatureScreen />
-      </Suspense>
-      <Suspense fallback={null}>
-        <Windows />
-      </Suspense>
-      <Suspense fallback={null}>
-        <Lobby />
-      </Suspense>
+      {shellReady && (
+        <>
+          <Suspense fallback={null}>
+            <Walls animate={!reduced} mobile={isMobile} />
+          </Suspense>
+          <Suspense fallback={null}>
+            <FeatureScreen />
+          </Suspense>
+          <Suspense fallback={null}>
+            <Windows />
+          </Suspense>
+          <Suspense fallback={null}>
+            <Lobby />
+          </Suspense>
+          <Suspense fallback={null}>
+            <Drone mobile={isMobile} />
+          </Suspense>
+        </>
+      )}
       <Airlock />
-      <Suspense fallback={null}>
-        <Drone mobile={isMobile} />
-      </Suspense>
 
       {!reduced && <Effects mobile={isMobile} quality={quality} />}
     </Canvas>

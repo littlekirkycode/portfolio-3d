@@ -59,14 +59,17 @@ const urlFor = (n: ModelName) => withBase(`/models/${n}.glb`);
 // Staged preloads: ONLY the two kit pieces warm up at module scope — they
 // (plus colormap.png, fetched by their GLTF load) are everything the p=0
 // corridor shell needs, and they must not share bandwidth with ~1.1 MB of
-// props during the first paint. Everything else kicks off post-mount via
-// preloadDeferredModels() (requestIdleCallback effect in Scene.tsx).
+// props during the first paint. Everything else kicks off via
+// preloadDeferredModels(), which Scene.tsx calls only once the SHELL wave
+// has cleared THREE.DefaultLoadingManager (first active→false edge, ~3s
+// fallback) — NOT on requestIdleCallback, which measures main-thread idle
+// and used to fire while the shell was still streaming (R0).
 const SHELL_MODELS: readonly ModelName[] = ["kit-wall", "kit-floor"];
 SHELL_MODELS.forEach((n) => useGLTF.preload(urlFor(n)));
 
 let deferredPreloadKicked = false;
 /**
- * Idle-time warm-up for every GLB the first paint doesn't need. Safe to call
+ * Post-shell warm-up for every GLB the first paint doesn't need. Safe to call
  * more than once (no-op after the first). Components that suspend on these
  * models still fetch on demand if they mount first — useGLTF dedupes by URL.
  */

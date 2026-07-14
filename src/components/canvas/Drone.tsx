@@ -202,10 +202,20 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       log.v += 1;
       writeLog(log);
     }
+    // R5: hidden-tab time must NOT count as dwell — the frame loop pauses and
+    // focusedRoom can't change while hidden, but performance.now() keeps
+    // advancing, so a 30-min tab switch used to book ~1800s against the open
+    // bay and permanently skew the "missed you" intro (AnalyticsProvider
+    // already guarded its own dwell metric this way). `since` is the start of
+    // the current CREDITABLE (visible) stretch, or null while the tab is
+    // hidden — so a pagehide/unmount flush after a long-hidden stretch
+    // credits nothing.
     let current: string | null = useScrollStore.getState().focusedRoom;
-    let since = performance.now();
+    const visibleNow = () =>
+      document.visibilityState === "hidden" ? null : performance.now();
+    let since: number | null = visibleNow();
     const credit = () => {
-      if (!current) return;
+      if (!current || since === null) return;
       const dwell = (performance.now() - since) / 1000;
       const log = readLog();
       log.bays[current] = (log.bays[current] ?? 0) + dwell;
@@ -215,17 +225,23 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       if (s.focusedRoom === prev.focusedRoom) return;
       credit();
       current = s.focusedRoom;
-      since = performance.now();
+      since = visibleNow();
     });
     // flush the open bay when the tab goes away mid-dwell
     const onHide = () => {
       credit();
-      since = performance.now();
+      since = visibleNow();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") credit(); // flush the visible stretch
+      since = visibleNow(); // hidden → null (never creditable); visible → restart
     };
     window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       unsub();
       window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVisibility);
       credit();
     };
   }, []);

@@ -14,6 +14,15 @@ import { BlendFunction } from "postprocessing";
 import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useCallback, useMemo, useRef, type JSX } from "react";
+// NOTE: never pass `ref` to the wrapEffect-wrapped effects (ChromaticAberration
+// etc). React 19 delivers `ref` as a PLAIN PROP to function components, and
+// @react-three/postprocessing's wrapEffect JSON.stringify()s its rest props as
+// a memo dep — once the ref is populated with the effect instance the
+// stringify walks circular R3F internals and THROWS, and SceneErrorBoundary
+// tears down the whole 3D layer. Any re-render of a mounted effect trips it
+// (a dpr decline, the R0 shell-ready flip). Per-frame mutation goes through
+// the stable `caOffset` vector instead — the effect's offset uniform holds
+// that exact Vector2 by reference.
 import * as THREE from "three";
 import { scrollRefs } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
@@ -31,9 +40,6 @@ type EffectsProps = {
   quality?: GfxQuality;
 };
 
-/** Minimal shape of the underlying ChromaticAberrationEffect we mutate. */
-type CAHandle = { offset: THREE.Vector2 };
-
 /**
  * Post-processing stack — the signature look.
  *  - Bloom turns emissive accents into glow.
@@ -48,8 +54,6 @@ export default function Effects({ mobile = false, quality = "high" }: EffectsPro
   // Live DPR (tracks PerformanceMonitor's dprMax regulation in Scene) — used
   // to shed the SMAA pass on phones once the buffer is dense enough.
   const dpr = useThree((s) => s.viewport.dpr);
-  // Ref to the underlying ChromaticAberrationEffect instance (loosely typed by drei).
-  const caRef = useRef<CAHandle | null>(null);
   const smear = useRef(0);
   // Photo mode (finding 47): register the live composer so captures render
   // through the post chain. React calls the callback with null on unmount.
@@ -58,21 +62,20 @@ export default function Effects({ mobile = false, quality = "high" }: EffectsPro
     [],
   );
 
-  // Stable initial offset vector (effect reads this each frame via its uniform).
-  // Base offset kept sub-pixel-ish: the previous 0.0006 base fringed every
-  // hard edge red/cyan even at rest (QA: whole-frame fringing).
+  // Stable offset vector — the ChromaticAberrationEffect's offset uniform
+  // holds this exact instance by reference, so mutating it per frame drives
+  // the shader with no React involvement (and no `ref` on the wrapped
+  // component — see the wrapEffect note at the imports). Base offset kept
+  // sub-pixel-ish: the previous 0.0006 base fringed every hard edge red/cyan
+  // even at rest (QA: whole-frame fringing).
   const caOffset = useMemo(() => new THREE.Vector2(0.00025, 0.00015), []);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 30);
     const target = Math.min(Math.abs(scrollRefs.velocity) * 0.0005, 0.0035);
     smear.current = damp(smear.current, target, 6, dt);
-
-    const eff = caRef.current;
-    if (eff && eff.offset) {
-      // Asymmetric so the smear has a directional, lens-like quality.
-      eff.offset.set(0.00025 + smear.current, 0.00015 + smear.current * 0.6);
-    }
+    // Asymmetric so the smear has a directional, lens-like quality.
+    caOffset.set(0.00025 + smear.current, 0.00015 + smear.current * 0.6);
   });
 
   // Build the pass list explicitly so the children type stays JSX.Element[].
@@ -126,7 +129,6 @@ export default function Effects({ mobile = false, quality = "high" }: EffectsPro
       // visible payoff.
       <ChromaticAberration
         key="ca"
-        ref={caRef}
         blendFunction={BlendFunction.NORMAL}
         offset={caOffset}
         radialModulation

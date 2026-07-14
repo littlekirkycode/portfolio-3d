@@ -39,23 +39,56 @@ export default function ProjectLink() {
   useEffect(() => {
     targetRef.current = target;
   });
+  // True while an exit tween is mid-flight (R9). If focus flickers back to
+  // the shown room inside the 0.4s exit window (A→null→A, or A→B→A at a bay
+  // boundary — Rig publishes focus from a hard threshold with no hysteresis),
+  // the effect cleanup kills the tween at an intermediate opacity/y, `shown`
+  // never changes, and the entrance effect can't re-run — the row used to
+  // stay frozen half-faded. This flag lets the reconcile below detect the
+  // interrupted exit and tween the row back to fully visible.
+  const exitingRef = useRef(false);
 
   // Reconcile the displayed pill row with the focused room ("wait" semantics).
   // Frozen while the dossier is open (Lenis is stopped, so focus can't drift —
   // this guard just makes that invariant explicit).
   useEffect(() => {
     if (dossierOpen) return;
-    if ((shown?.id ?? null) === targetId) return;
+    if ((shown?.id ?? null) === targetId) {
+      // Focus is back on the row we already show. Normally nothing to do —
+      // unless an exit tween was killed mid-flight (see exitingRef above):
+      // restore the row instead of leaving it half-faded.
+      if (exitingRef.current) {
+        exitingRef.current = false;
+        const el = elRef.current;
+        if (el) {
+          const tween = gsap.to(el, {
+            opacity: 1,
+            y: 0,
+            duration: 0.3,
+            ease: "power4.out",
+            overwrite: "auto",
+          });
+          return () => {
+            tween.kill();
+          };
+        }
+      }
+      return;
+    }
     const el = elRef.current;
     if (el && shown) {
       // animate the old row out, then swap (or clear) in onComplete
+      exitingRef.current = true;
       const tween = gsap.to(el, {
         opacity: 0,
         y: 18,
         duration: 0.4,
         ease: "power4.out",
         overwrite: "auto", // kill a still-running entrance on the same row
-        onComplete: () => setShown(targetRef.current),
+        onComplete: () => {
+          exitingRef.current = false;
+          setShown(targetRef.current);
+        },
       });
       return () => {
         tween.kill();

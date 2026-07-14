@@ -53,21 +53,41 @@ export function useDeepLink(): void {
   // ── Inbound: #<id> → jump the scroll engine to that stop, once, on boot ──
   useEffect(() => {
     if (!ready) return;
-    const id = decodeURIComponent(window.location.hash.slice(1));
+    // R7: browsers preserve raw '%' in fragments, so a truncated share link
+    // (#selfquest%2) or copy-paste junk (#75%) reaches us malformed and
+    // decodeURIComponent THROWS. Uncaught inside this effect it would unmount
+    // the whole React tree (no app-level boundary). Malformed hash = not a
+    // deep link = ignore.
+    let id = "";
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
     const target = id ? DEEP_LINKS.get(id) : undefined;
     if (target === undefined) return;
 
     let cancelled = false;
     let raf = 0;
+    // S1: on desktop lenis.limit stays 0 until the lazy 3D chunk mounts and
+    // the pin spacer is measured (~1.2s after Lenis creation), so a one-shot
+    // jump always bailed and the camera never parked. Poll (a rAF with two
+    // cheap reads) until the limit is real; give up if the visitor starts
+    // walking (progress > 0.02 — never yank them off their own scroll) or
+    // after a generous deadline (something is wrong; a late teleport would
+    // only confuse).
+    const deadline = performance.now() + 15_000;
     const jump = () => {
       if (cancelled) return;
-      // The visitor already started walking — don't yank them off their scroll.
       if (scrollRefs.progress > 0.02) return;
       const lenis = (window as unknown as { __lenis?: LenisLike }).__lenis;
-      if (!lenis || !(lenis.limit > 0)) return;
+      if (!lenis || !(lenis.limit > 0)) {
+        if (performance.now() < deadline) raf = requestAnimationFrame(jump);
+        return;
+      }
       lenis.scrollTo(target * lenis.limit, { immediate: true });
     };
-    // Jump after the font-settle ScrollTrigger.refresh() (SmoothScrollProvider
+    // Start after the font-settle ScrollTrigger.refresh() (SmoothScrollProvider
     // registers its fonts.ready handler first, so ours resolves after it) plus
     // a double rAF so the re-measured lenis.limit is final. The boot overlay is
     // pointer-events-none and purely visual — jumping beneath it is safe; the

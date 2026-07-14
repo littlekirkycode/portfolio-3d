@@ -13,8 +13,14 @@ import HudFrame from "@/components/ui/HudFrame";
  *
  * Behaviour contract:
  *  - never appears if everything resolves within GRACE_MS (warm cache);
- *  - fades out and UNMOUNTS once loading completes (instant unmount, no fade,
- *    under prefers-reduced-motion);
+ *  - closes on SHELL readiness (R0): the first time the loading manager goes
+ *    active→false the corridor shell has resolved, and the overlay commits to
+ *    closing — the staged deferred-prop wave that re-activates the manager
+ *    moments later streams into a VISIBLE corridor and must never re-arm or
+ *    cancel the close (it used to hold the opaque card up for the full ~1.1 MB
+ *    payload on slow connections);
+ *  - fades out and UNMOUNTS once closed (instant unmount, no fade, under
+ *    prefers-reduced-motion);
  *  - pointer-events-none for its entire life — it can never block the page.
  */
 
@@ -56,6 +62,7 @@ export default function BootOverlay({
       everActive: false,
       active: false,
       chunkReady: false,
+      shellDone: false,
       shown: false,
       closing: false,
     };
@@ -75,25 +82,29 @@ export default function BootOverlay({
       timers.push(window.setTimeout(() => setPhase("done"), FADE_MS));
     };
 
-    // Debounced "are we actually done?" — a new wave of loads (e.g. the
-    // idle-time deferred preloads) re-activates the manager and cancels the
-    // close simply by failing this re-check.
+    // Debounced "are we actually done?". Once the shell wave has cleared the
+    // manager (shellDone) the answer is unconditionally yes — the staged
+    // deferred-prop wave may already be re-activating the manager, and it
+    // must not cancel the close (R0: it streams into a visible corridor).
     const scheduleDoneCheck = (delay: number) => {
       timers.push(
         window.setTimeout(() => {
           if (s.closing) return;
-          const looksDone = s.everActive ? !s.active : s.chunkReady;
+          const looksDone =
+            s.shellDone || (s.everActive ? !s.active : s.chunkReady);
           if (looksDone) close();
         }, delay),
       );
     };
 
-    // Anti-flash gate: only materialise if, after the grace period, loading
-    // is still pending (or the chunk hasn't even landed yet).
+    // Anti-flash gate: only materialise if, after the grace period, the shell
+    // is still pending (or the chunk hasn't even landed yet). shellDone also
+    // short-circuits here: a fast shell followed by an already-active
+    // deferred wave must not flash the overlay.
     timers.push(
       window.setTimeout(() => {
         if (s.closing) return;
-        if (s.everActive && !s.active) {
+        if (s.shellDone || (s.everActive && !s.active)) {
           close(); // finished before we ever showed — never flash
           return;
         }
@@ -112,7 +123,12 @@ export default function BootOverlay({
           // Monotonic display % — drei's progress can step back when a new
           // wave of items joins the manager mid-flight.
           setPct((p) => Math.max(p, Math.min(100, Math.floor(snap.progress))));
-          if (s.everActive && !snap.active) scheduleDoneCheck(LINGER_MS);
+          // First active→false edge = the shell wave cleared. Latch it: the
+          // overlay's job is done regardless of any later wave.
+          if (s.everActive && !snap.active && !s.shellDone) {
+            s.shellDone = true;
+            scheduleDoneCheck(LINGER_MS);
+          }
         };
         apply(store.getState());
         unsub = store.subscribe(apply);

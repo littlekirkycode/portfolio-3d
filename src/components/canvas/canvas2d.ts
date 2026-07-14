@@ -96,6 +96,13 @@ export function useTextTexture(
     tex.anisotropy = scale === 1 ? 16 : 4;
     return tex;
   }, [width, height, scale]);
+  // R2/R4: the memo re-mints the texture when the mobile scale flips (a
+  // desktop resize across the breakpoint), and R3F does NOT dispose swapped
+  // `map` props — without this the previous GPU texture (~40 call sites of
+  // RGBA backing stores) lingered until nondeterministic GC. Cleanup runs
+  // with the OLD texture after the new one is committed, and again on
+  // unmount; dispose() is idempotent.
+  useEffect(() => () => texture.dispose(), [texture]);
   useEffect(() => {
     const ctx = (texture.image as HTMLCanvasElement).getContext("2d");
     if (!ctx) return;

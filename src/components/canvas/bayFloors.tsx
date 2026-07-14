@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { RoomTheme } from "@/lib/constants";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -32,6 +32,11 @@ const MAT_SPECS: Record<RoomTheme, { shape: "rect" | "round" | "map"; w: number;
 function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z: number }) {
   const render = useMemo(
     () => (ctx: CanvasRenderingContext2D, cw: number, ch: number) => {
+      // R6: shadowBlur applies in BACKING-STORE pixels — the canvas spec
+      // exempts shadow geometry from the CTM — so useTextTexture's mobile
+      // 0.5x transform halves the map but not the glow, doubling the halo
+      // relative to the street grid. Scale the blur by the live transform.
+      const bs = ctx.getTransform().a || 1;
       const line = (x1: number, y1: number, x2: number, y2: number) => {
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
       };
@@ -72,7 +77,7 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       line(0, ch * 0.08, cw, ch * 0.78); // diagonal boulevard
       // glowing navigation route
       ctx.shadowColor = accent;
-      ctx.shadowBlur = 26;
+      ctx.shadowBlur = 26 * bs;
       ctx.strokeStyle = accent;
       ctx.lineWidth = 12;
       ctx.lineCap = "round";
@@ -88,7 +93,7 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       // pin markers (flat, drawn on the map)
       const pin = (x: number, y: number, r: number, hi: boolean) => {
         ctx.fillStyle = hi ? "#ffffff" : accent;
-        if (hi) { ctx.shadowColor = accent; ctx.shadowBlur = 22; }
+        if (hi) { ctx.shadowColor = accent; ctx.shadowBlur = 22 * bs; }
         ctx.beginPath();
         ctx.moveTo(x, y);
         ctx.quadraticCurveTo(x - r, y - r * 1.25, x - r, y - r * 1.85);
@@ -445,6 +450,9 @@ export function GymDeck({ accent }: { accent: string }) {
     t.anisotropy = mobile ? 4 : 8;
     return t;
   }, [accent, mobile]);
+  // R4: same dispose contract as useTextTexture — the mobile flip re-mints
+  // the texture and R3F never disposes swapped map props.
+  useEffect(() => () => tex.dispose(), [tex]);
   return (
     <mesh position={[0, 0.025, 0.45]} rotation-x={-Math.PI / 2}>
       <planeGeometry args={[7.9, 3.95]} />
@@ -475,6 +483,8 @@ export function FloorStory({ theme, accent }: { theme: RoomTheme; accent: string
     t.anisotropy = mobile ? 4 : 8;
     return t;
   }, [art, accent, mobile]);
+  // R4: same dispose contract as useTextTexture (see canvas2d.ts).
+  useEffect(() => () => tex.dispose(), [tex]);
   return (
     /* y 0.05: above the mat slab + rim (~0.02) — flush to the eye, no z-fight */
     <mesh position={[art.cx, 0.05, art.cz]} rotation-x={-Math.PI / 2}>

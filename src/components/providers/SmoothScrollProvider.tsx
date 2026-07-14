@@ -89,7 +89,9 @@ export default function SmoothScrollProvider({
     // Stable progress denominator (mobile only). The live lenis.limit shrinks/
     // grows ~60-100px when the browser address bar auto-hides mid-gesture,
     // which used to jerk the 3D camera. Measured once at setup and re-measured
-    // only on real viewport changes (rotation / width change) — never per event.
+    // only on real viewport changes (rotation / width change / height-only
+    // changes past the address-bar band + fonts settling — see the R8 policy
+    // at the mobile onResize handler) — never per event.
     let mobileLimit = 0;
 
     // ── Lenis → velocity ref + drives ScrollTrigger (desktop) / progress (mobile) ──
@@ -216,6 +218,7 @@ export default function SmoothScrollProvider({
     //    scrolling down the tall page. ──
     mm.add(MOBILE_MEDIA_QUERY, () => {
       mobileMode = true;
+      let disposed = false;
       const measureLimit = () => {
         mobileLimit = Math.max(
           0,
@@ -231,25 +234,66 @@ export default function SmoothScrollProvider({
           .map((el) => el.getBoundingClientRect().top + lenis.scroll);
       };
       measure();
-      // Section tops re-measure on every resize; the progress denominator only
-      // on width changes / rotation — an address-bar collapse fires resize with
-      // the SAME width, and re-deriving the limit there is exactly the hitch
-      // this guards against.
+      // Section tops re-measure on every resize. The progress denominator is
+      // stickier (R8 policy):
+      //  - width change / rotation → re-measure immediately (unchanged);
+      //  - height-ONLY change ≤ HEIGHT_JITTER_PX → ignore. That band covers
+      //    every mobile address-bar collapse/expand (~56-114px across Chrome
+      //    Android / iOS Safari / Samsung Internet), which fires resize with
+      //    the SAME width mid-gesture — re-deriving the limit there is
+      //    exactly the camera hitch this guard exists for. A stale
+      //    denominator of ≤140px on a multi-thousand-px page is ≤ ~2%
+      //    progress error;
+      //  - height-only change > HEIGHT_JITTER_PX (Android split-screen
+      //    roughly HALVES the height; desktop-window height drags on
+      //    coarse-pointer setups run to hundreds of px) → re-measure once
+      //    the burst settles (HEIGHT_SETTLE_MS), so a live drag re-measures
+      //    once at the final layout instead of jerking per event. Without
+      //    this, published progress could cap near 0.5 (bridge unreachable)
+      //    or peg to 1.0 halfway down, permanently.
+      const HEIGHT_JITTER_PX = 140;
+      const HEIGHT_SETTLE_MS = 250;
       let lastWidth = window.innerWidth;
+      let lastHeight = window.innerHeight;
+      let settleTimer = 0;
+      const remeasure = () => {
+        lastWidth = window.innerWidth;
+        lastHeight = window.innerHeight;
+        measureLimit();
+        measure();
+        // Re-publish so the camera/HUD correct even before the next scroll event.
+        publishProgress(
+          mobileLimit > 0 ? Math.min(1, Math.max(0, lenis.scroll / mobileLimit)) : 0,
+        );
+      };
       const onResize = () => {
         if (window.innerWidth !== lastWidth) {
-          lastWidth = window.innerWidth;
-          measureLimit();
+          window.clearTimeout(settleTimer);
+          remeasure();
+        } else if (Math.abs(window.innerHeight - lastHeight) > HEIGHT_JITTER_PX) {
+          window.clearTimeout(settleTimer);
+          settleTimer = window.setTimeout(remeasure, HEIGHT_SETTLE_MS);
         }
         measure();
       };
       const onOrientation = () => {
-        lastWidth = window.innerWidth;
-        measureLimit();
-        measure();
+        window.clearTimeout(settleTimer);
+        remeasure();
       };
       window.addEventListener("resize", onResize);
       window.addEventListener("orientationchange", onOrientation);
+      // Post-boot layout growth fires NO resize event (webfonts settling can
+      // change the flowing stack's scrollHeight): re-derive the denominator
+      // once fonts land — desktop gets this via the global fonts.ready →
+      // ScrollTrigger.refresh() below, mobile needs its own hook. Happens at
+      // boot (progress ≈ 0), so the one-off correction is invisible.
+      if (typeof document !== "undefined" && "fonts" in document) {
+        document.fonts.ready
+          .then(() => {
+            if (!disposed) remeasure();
+          })
+          .catch(() => {});
+      }
       setScrollToSection((index: number) => {
         const sections = gsap.utils.toArray<HTMLElement>("[data-section]");
         const el = sections[index];
@@ -258,6 +302,8 @@ export default function SmoothScrollProvider({
       setReady(true);
       return () => {
         mobileMode = false;
+        disposed = true;
+        window.clearTimeout(settleTimer);
         window.removeEventListener("resize", onResize);
         window.removeEventListener("orientationchange", onOrientation);
         mobileSectionTops = [];

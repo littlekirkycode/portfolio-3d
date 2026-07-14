@@ -34,16 +34,27 @@ export default function AchievementToast() {
     };
   }, []);
 
-  if (!text) return null;
-
+  /* R12: the role="status" live region must EXIST (empty) before content is
+     inserted — screen readers only announce CHANGES to a live region, so
+     mounting the region together with its text (one mutation) was typically
+     silent and the one-shot payoff permanently missed. The always-mounted
+     outer div is the region (zero-size, invisible, but in the a11y tree —
+     never display:none, which would drop it from the tree); only the styled
+     toast content mounts/unmounts inside it. */
   return (
     <div
       role="status"
-      data-testid="achievement-toast"
-      className="pointer-events-none fixed left-1/2 top-20 z-50 flex -translate-x-1/2 items-center gap-2.5 whitespace-nowrap border border-accent/60 bg-bg-elev/85 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.22em] text-ink backdrop-blur-md"
+      className="pointer-events-none fixed left-1/2 top-20 z-50 -translate-x-1/2"
     >
-      <span aria-hidden className="hud-blink h-1.5 w-1.5 rounded-full bg-accent" />
-      {text}
+      {text && (
+        <div
+          data-testid="achievement-toast"
+          className="flex items-center gap-2.5 whitespace-nowrap border border-accent/60 bg-bg-elev/85 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.22em] text-ink backdrop-blur-md"
+        >
+          <span aria-hidden className="hud-blink h-1.5 w-1.5 rounded-full bg-accent" />
+          {text}
+        </div>
+      )}
     </div>
   );
 }
