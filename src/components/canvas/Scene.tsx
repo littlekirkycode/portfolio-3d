@@ -2,11 +2,13 @@
 
 import { Canvas, useThree } from "@react-three/fiber";
 import { PerformanceMonitor } from "@react-three/drei";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PerspectiveCamera } from "three";
 import { useIsMobile, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
 import { useReducedMotion } from "@/lib/useReducedMotion";
+import { useQualityStore } from "@/lib/quality";
+import { registerCapture, getComposer } from "@/lib/capture";
 import Rig from "./Rig";
 import Corridor from "./Corridor";
 import KitShell from "./KitShell";
@@ -92,6 +94,16 @@ export default function Scene() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+  // Mirror for the PerformanceMonitor callbacks (they close over renders).
+  const dprMaxRef = useRef(dprMax);
+  useEffect(() => {
+    dprMaxRef.current = dprMax;
+  }, [dprMax]);
+
+  // Quality tier (finding 46): once DPR regulation has bottomed out, the only
+  // relief left is shedding post passes — Effects drops to Bloom + Vignette
+  // on "lite". The store also carries the user's GFX-chip override.
+  const quality = useQualityStore((s) => s.quality);
 
   const [visible, setVisible] = useState(true);
   useEffect(() => {
@@ -133,9 +145,26 @@ export default function Scene() {
       // coords do. (This module is ssr:false — document exists at render.)
       eventSource={document.body}
       eventPrefix="client"
-      onCreated={({ gl, scene, invalidate }) => {
+      onCreated={({ gl, scene, camera, invalidate }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.25;
+        // Photo mode (finding 47): render ONE fresh frame — through the
+        // composer when the post chain is mounted (a bare gl.render would
+        // strip bloom/vignette), else directly — then read the canvas back.
+        // preserveDrawingBuffer stays false: toBlob snapshots at call time,
+        // in the same task as the render, before the buffer is cleared.
+        registerCapture(async () => {
+          try {
+            const composer = getComposer();
+            if (composer) composer.render();
+            else gl.render(scene, camera);
+            return await new Promise<Blob | null>((resolve) =>
+              gl.domElement.toBlob((b) => resolve(b), "image/png"),
+            );
+          } catch {
+            return null;
+          }
+        });
         // Context-loss resilience (finding 28): preventDefault signals the
         // browser we can handle a restore (common under mobile-Safari memory
         // pressure); on restore, poke the frameloop so rendering resumes
@@ -147,6 +176,7 @@ export default function Scene() {
         // globals chokes on the scene graph's circular parent/children refs
         // (QA: "Converting circular structure to JSON" overlay error).
         Object.defineProperty(window, "__scene", { value: scene, configurable: true });
+        Object.defineProperty(window, "__camera", { value: camera, configurable: true });
       }}
     >
       <color attach="background" args={[BG]} />
@@ -158,7 +188,14 @@ export default function Scene() {
           whole canvas then snapped back (QA: "posters sometimes go blurry").
           Desktop floor 1.25 keeps text legible even under sustained decline. */}
       <PerformanceMonitor
-        onDecline={() => setDprMax((d) => Math.max(isMobile ? 1 : 1.25, d - 0.5))}
+        onDecline={() => {
+          const floor = isMobile ? 1 : 1.25;
+          // Still declining AT the floor → nothing left to shed resolution-
+          // wise; escalate to the lite post tier (finding 46). A manual GFX-
+          // chip choice always wins (autoLite no-ops once `manual` is set).
+          if (dprMaxRef.current <= floor) useQualityStore.getState().autoLite();
+          else setDprMax(Math.max(floor, dprMaxRef.current - 0.5));
+        }}
         onIncline={() => setDprMax((d) => Math.min(2, d + 0.25))}
         flipflops={3}
       />
@@ -205,7 +242,7 @@ export default function Scene() {
         <Drone mobile={isMobile} />
       </Suspense>
 
-      {!reduced && <Effects mobile={isMobile} />}
+      {!reduced && <Effects mobile={isMobile} quality={quality} />}
     </Canvas>
   );
 }

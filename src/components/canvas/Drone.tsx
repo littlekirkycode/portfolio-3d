@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useGLTF, useAnimations } from "@react-three/drei";
 import { Model } from "./ModelLoader";
-import { scrollRefs, fxRefs, pointerRefs } from "@/lib/scrollStore";
+import { scrollRefs, fxRefs, pointerRefs, useScrollStore } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import {
@@ -18,9 +18,13 @@ import {
   GALLERY_SIDE,
   FEATURE_X,
   BRIDGE_ENTER_P,
+  ROOMS,
 } from "./hallConfig";
 import { familyVar } from "./canvas2d";
 import { withBase } from "@/lib/asset";
+import { playQuip } from "@/lib/useShipAudio";
+import { showAchievement } from "@/components/ui/AchievementToast";
+import { track } from "@/lib/analytics";
 
 /**
  * UNIT-07 — escort drone (Quaternius "Robot Enemy Flying", CC0). Flies ~one
@@ -72,13 +76,63 @@ const IDLE_QUIPS = [
   "psst. the scroll wheel. use it.",
 ];
 
-// escalating responses to being clicked/tapped
+/** Idle lines + ONE time-aware line for the night-shift crowd (finding 45). */
+function idleQuipsNow(): string[] {
+  const h = new Date().getHours();
+  if (h >= 0 && h <= 4) {
+    return [
+      ...IDLE_QUIPS,
+      h === 0 ? "it's midnight where you are. respect." : `it's ${h}am where you are. respect.`,
+    ];
+  }
+  return IDLE_QUIPS;
+}
+
+// escalating responses to being clicked/tapped — the 5th lands WITH the
+// barrel roll (every 5th poke re-triggers it; the modulo keeps them aligned)
 const POKE_QUIPS = [
   "careful. i'm load-bearing.",
   "UNIT-07 is not a toy.",
   "ok. that's mildly annoying.",
   "i know where you sleep. it's the crew bunk.",
+  "fine. ONE barrel roll. don't tell james.",
 ];
+const ROLL_DUR = 1.4; // seconds — the 720° payoff spin
+
+/* ── crew log: visit count + bay dwell persistence (finding 45) ──────────────
+ * Follows useShipAudio's localStorage pattern ("ship-audio"): tiny, guarded,
+ * fails silent everywhere (private mode, disabled storage). */
+
+const LS_LOG = "ship-log";
+const LS_MORALE = "ship-morale"; // "1" once the achievement toast has shown
+
+type ShipLog = { v: number; bays: Record<string, number> };
+
+function readLog(): ShipLog {
+  try {
+    const raw = localStorage.getItem(LS_LOG);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ShipLog>;
+      return {
+        v: typeof parsed.v === "number" ? parsed.v : 0,
+        bays:
+          parsed.bays && typeof parsed.bays === "object"
+            ? (parsed.bays as Record<string, number>)
+            : {},
+      };
+    }
+  } catch {}
+  return { v: 0, bays: {} };
+}
+
+function writeLog(log: ShipLog): void {
+  try {
+    localStorage.setItem(LS_LOG, JSON.stringify(log));
+  } catch {}
+}
+
+// one visit per page load (module scope survives StrictMode remounts)
+let visitCounted = false;
 
 // reused temps (never allocated per-frame)
 const _look = new THREE.Object3D();
@@ -119,6 +173,62 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
   const pokeIdx = useRef(-1);
   const pokeAt = useRef(-99);
   const bodyScale = useRef(1);
+  const rollAt = useRef(-99); // t.current when a barrel roll started
+  const bobKick = useRef(0); // reduced-motion 5th-poke hop (decays in-frame)
+
+  // Time-aware idle table + the returning-visitor intro, both fixed at mount.
+  const idleQuips = useMemo(() => idleQuipsNow(), []);
+  // Returning visitors get a personalised intro naming the LEAST-dwelled bay
+  // from their previous visits (the one they rushed past). Reads the log
+  // BEFORE this load's visit is counted (the effect below runs post-render).
+  const introQuip = useMemo(() => {
+    const log = readLog();
+    if (log.v < 1) return "UNIT-07. follow me.";
+    const seen = Object.entries(log.bays);
+    if (seen.length === 0) return "back again? the corridor's how you left it.";
+    seen.sort((a, b) => a[1] - b[1]);
+    const room = ROOMS.find((r) => r.id === seen[0][0]);
+    if (!room) return "back again? i kept the lights on.";
+    return `back again? the ${room.title.toLowerCase()} bay missed you.`;
+  }, []);
+
+  // Crew log: count the visit once per load; meter dwell per focused bay
+  // (coarse focusedRoom transitions — never per-frame) so the NEXT visit's
+  // intro can name the least-loved one.
+  useEffect(() => {
+    if (!visitCounted) {
+      visitCounted = true;
+      const log = readLog();
+      log.v += 1;
+      writeLog(log);
+    }
+    let current: string | null = useScrollStore.getState().focusedRoom;
+    let since = performance.now();
+    const credit = () => {
+      if (!current) return;
+      const dwell = (performance.now() - since) / 1000;
+      const log = readLog();
+      log.bays[current] = (log.bays[current] ?? 0) + dwell;
+      writeLog(log);
+    };
+    const unsub = useScrollStore.subscribe((s, prev) => {
+      if (s.focusedRoom === prev.focusedRoom) return;
+      credit();
+      current = s.focusedRoom;
+      since = performance.now();
+    });
+    // flush the open bay when the tab goes away mid-dwell
+    const onHide = () => {
+      credit();
+      since = performance.now();
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      unsub();
+      window.removeEventListener("pagehide", onHide);
+      credit();
+    };
+  }, []);
 
   // Body mounts through ModelLoader's <Model> — the ONE normalisation path
   // proven to size this FBX-converted rig correctly (a bespoke Box3 fit here
@@ -326,6 +436,10 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       ty = HOVER_Y + bob - 0.32 * bd;
     }
 
+    // reduced-motion 5th-poke payoff: a modest hop instead of the barrel roll
+    bobKick.current = damp(bobKick.current, 0, 3, dt);
+    ty += bobKick.current;
+
     if (!init.current) {
       g.position.set(tx, ty, tz);
       init.current = true;
@@ -383,6 +497,18 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       _qTravel.multiply(_qRoll);
     }
     body.quaternion.slerp(_qTravel, 1 - Math.exp(-6 * dt));
+
+    // 5th-poke payoff (finding 45): a full 720° barrel roll about the local
+    // travel axis, composed AFTER the aim slerp — slerping toward a fast-
+    // spinning target would lag and under-rotate. Ends at 4π ≡ identity, so
+    // there is no snap when the window closes. (Never triggered under
+    // reduced motion — see the poke handler.)
+    const ru = (t.current - rollAt.current) / ROLL_DUR;
+    if (ru >= 0 && ru < 1) {
+      const rs = ru * ru * (3 - 2 * ru);
+      _qRoll.setFromAxisAngle(_zAxis, rs * Math.PI * 4);
+      body.quaternion.multiply(_qRoll);
+    }
 
     // poke feedback: quick scale pop that settles back to 1
     bodyScale.current = damp(bodyScale.current, 1, 6, dt);
@@ -450,14 +576,14 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           text = "the showreel. i'm in the deleted scenes.";
         } else if (p < 0.045) {
           key = "intro";
-          text = "UNIT-07. follow me.";
+          text = introQuip;
         } else if (idleT.current > 6) {
           if (t.current >= idleQuipNextAt.current) {
-            idleQuipIdx.current = (idleQuipIdx.current + 1) % IDLE_QUIPS.length;
+            idleQuipIdx.current = (idleQuipIdx.current + 1) % idleQuips.length;
             idleQuipNextAt.current = t.current + 7;
           }
           key = `idle:${idleQuipIdx.current}`;
-          text = IDLE_QUIPS[idleQuipIdx.current];
+          text = idleQuips[idleQuipIdx.current];
         }
       }
       if (key !== quipKey.current) {
@@ -465,6 +591,8 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
         if (key && text) {
           drawQuip(text, accent);
           quipShownAt.current = t.current;
+          // 8-bit chirp with the bubble; pokes escalate the pitch (finding 44)
+          playQuip(key.startsWith("poke:") ? pokeIdx.current + 1 : 0);
         }
       }
       const showing =
@@ -504,9 +632,22 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
         ref={bodyRef}
         onClick={(e) => {
           e.stopPropagation();
+          track("drone_poked");
           pokeIdx.current = pokeIdx.current + 1;
           pokeAt.current = t.current;
           bodyScale.current = 1.25;
+          // Every 5th poke: the payoff (finding 45). Reduced motion swaps the
+          // 720° roll for a modest hop; the achievement toast fires ONCE ever.
+          if (pokeIdx.current % POKE_QUIPS.length === POKE_QUIPS.length - 1) {
+            if (reduced) bobKick.current = 0.28;
+            else rollAt.current = t.current;
+            try {
+              if (!localStorage.getItem(LS_MORALE)) {
+                localStorage.setItem(LS_MORALE, "1");
+                showAchievement("ACHIEVEMENT: CREW MORALE OFFICER");
+              }
+            } catch {}
+          }
         }}
       >
         <Model name="drone" maxDim={SCALE} onFloor={false} />

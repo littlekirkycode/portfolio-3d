@@ -11,16 +11,24 @@ import {
   SMAA,
 } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
+import type { EffectComposer as EffectComposerImpl } from "postprocessing";
 import { useFrame, useThree } from "@react-three/fiber";
-import { useMemo, useRef, type JSX } from "react";
+import { useCallback, useMemo, useRef, type JSX } from "react";
 import * as THREE from "three";
 import { scrollRefs } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
+import { registerComposer } from "@/lib/capture";
+import type { GfxQuality } from "@/lib/quality";
 
 type EffectsProps = {
   /** Lighter chain on mobile: cheaper bloom, no grain, no chromatic
    *  aberration, and SMAA shed once dpr climbs past 1.75. */
   mobile?: boolean;
+  /** "lite" (finding 46) strips the chain to Bloom + Vignette — the signature
+   *  glow stays, everything else goes. Set automatically when Performance-
+   *  Monitor declines at the DPR floor, or manually via the GFX chip.
+   *  Swapping the pass set does NOT recompile scene materials — safe live. */
+  quality?: GfxQuality;
 };
 
 /** Minimal shape of the underlying ChromaticAberrationEffect we mutate. */
@@ -35,13 +43,20 @@ type CAHandle = { offset: THREE.Vector2 };
  *
  * This whole component is unmounted by <Scene> under reduced motion.
  */
-export default function Effects({ mobile = false }: EffectsProps) {
+export default function Effects({ mobile = false, quality = "high" }: EffectsProps) {
+  const lite = quality === "lite";
   // Live DPR (tracks PerformanceMonitor's dprMax regulation in Scene) — used
   // to shed the SMAA pass on phones once the buffer is dense enough.
   const dpr = useThree((s) => s.viewport.dpr);
   // Ref to the underlying ChromaticAberrationEffect instance (loosely typed by drei).
   const caRef = useRef<CAHandle | null>(null);
   const smear = useRef(0);
+  // Photo mode (finding 47): register the live composer so captures render
+  // through the post chain. React calls the callback with null on unmount.
+  const composerRef = useCallback(
+    (c: EffectComposerImpl | null) => registerComposer(c),
+    [],
+  );
 
   // Stable initial offset vector (effect reads this each frame via its uniform).
   // Base offset kept sub-pixel-ish: the previous 0.0006 base fringed every
@@ -68,7 +83,7 @@ export default function Effects({ mobile = false }: EffectsProps) {
   // dpr ≥ 1.75 (≈3x+ downsampled physical pixels) its edge cleanup is barely
   // visible while still costing a full-screen multi-target pass — shed it
   // once PerformanceMonitor has climbed the buffer that dense (finding 5).
-  if (!mobile || dpr < 1.75) {
+  if (!lite && (!mobile || dpr < 1.75)) {
     passes.push(<SMAA key="smaa" />);
   }
 
@@ -85,20 +100,25 @@ export default function Effects({ mobile = false }: EffectsProps) {
       mipmapBlur
       radius={mobile ? 0.6 : 0.85}
     />,
-    // Grade — the colourist pass. Runs AFTER bloom so halos get contrast-
-    // shaped too: blacks pushed down, mids gently steepened, chroma nudged up
-    // so the warm-vs-cool accent contrast registers. Contrast kept modest —
-    // +0.14 was clipping highlights and banding the dark wall gradients.
-    // ORDER MATTERS: HueSaturation must run BEFORE BrightnessContrast. The
-    // -0.02 brightness pushes near-black buffer values NEGATIVE, and
-    // HueSaturation's colour math NaNs on negatives — the NaNs render as
-    // SOLID WHITE BLOBS over dark screen content (QA: showreel screenshots;
-    // empirically bisected pass-by-pass, July 2026).
-    <HueSaturation key="grade-hs" saturation={0.07} />,
-    <BrightnessContrast key="grade-bc" brightness={-0.02} contrast={0.07} />,
   );
 
-  if (!mobile) {
+  if (!lite) {
+    passes.push(
+      // Grade — the colourist pass. Runs AFTER bloom so halos get contrast-
+      // shaped too: blacks pushed down, mids gently steepened, chroma nudged up
+      // so the warm-vs-cool accent contrast registers. Contrast kept modest —
+      // +0.14 was clipping highlights and banding the dark wall gradients.
+      // ORDER MATTERS: HueSaturation must run BEFORE BrightnessContrast. The
+      // -0.02 brightness pushes near-black buffer values NEGATIVE, and
+      // HueSaturation's colour math NaNs on negatives — the NaNs render as
+      // SOLID WHITE BLOBS over dark screen content (QA: showreel screenshots;
+      // empirically bisected pass-by-pass, July 2026).
+      <HueSaturation key="grade-hs" saturation={0.07} />,
+      <BrightnessContrast key="grade-bc" brightness={-0.02} contrast={0.07} />,
+    );
+  }
+
+  if (!mobile && !lite) {
     passes.push(
       // Velocity smear — desktop only (finding 5): under native touch scroll
       // the smear practically never triggers, and the resting base offset is
@@ -128,5 +148,9 @@ export default function Effects({ mobile = false }: EffectsProps) {
     <Vignette key="vignette" eskil={false} offset={0.15} darkness={0.95} />,
   );
 
-  return <EffectComposer multisampling={0}>{passes}</EffectComposer>;
+  return (
+    <EffectComposer ref={composerRef} multisampling={0}>
+      {passes}
+    </EffectComposer>
+  );
 }

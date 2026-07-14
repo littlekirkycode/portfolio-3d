@@ -11,9 +11,11 @@ import { createPortal } from "react-dom";
 import { gsap } from "@/lib/gsap";
 import { SITE } from "@/lib/constants";
 import { fxRefs } from "@/lib/scrollStore";
+import { playWarpRiser } from "@/lib/useShipAudio";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { useIsMobile } from "@/lib/useIsMobile";
 import SplitText from "@/components/ui/SplitText";
+import { track } from "@/lib/analytics";
 
 // Evaluated once at module load — matches the build-time prerender and avoids any
 // per-render/hydration divergence at a year boundary.
@@ -101,6 +103,7 @@ export default function Contact() {
 
   const onDepart = useCallback(() => {
     if (departing.current) return;
+    track("depart_pressed");
     const lenis = (window as unknown as { __lenis?: LenisLike }).__lenis;
 
     if (reduced) {
@@ -112,6 +115,9 @@ export default function Contact() {
     }
 
     departing.current = true;
+    // Score the beat (finding 44): the synth riser tracks fxRefs.warp as it
+    // ramps below and booms at the flash. Silent no-op unless sound is on.
+    playWarpRiser();
     const start = performance.now();
     const DUR = 900;
     const step = (now: number) => {
