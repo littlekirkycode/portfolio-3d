@@ -18,7 +18,14 @@ import Lobby from "./Lobby";
 import Drone from "./Drone";
 import Airlock from "./Airlock";
 import Effects from "./Effects";
+import { preloadDeferredModels } from "./ModelLoader";
 import { EYE_Y, HFOV_DESKTOP, HFOV_MOBILE } from "./hallConfig";
+
+// Re-exported for the DOM-side BootOverlay: drei's progress store rides along
+// in this (already lazy) chunk, so the overlay observes the SAME
+// THREE.DefaultLoadingManager the scene's loaders feed — without pulling
+// drei/three into the eager bundle.
+export { useProgress } from "@react-three/drei";
 
 const BG = "#090b14";
 
@@ -79,6 +86,19 @@ export default function Scene() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
+  // Stage the non-critical GLB preloads: the shell pieces (kit-wall/kit-floor)
+  // warm up at ModelLoader module scope; the other ~30 models wait for browser
+  // idle so they never contend with the shell + scene chunk on a cold load.
+  // Components that suspend on a model before idle still fetch it on demand.
+  useEffect(() => {
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(() => preloadDeferredModels());
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(preloadDeferredModels, 200); // Safari < 18
+    return () => window.clearTimeout(t);
+  }, []);
+
   return (
     <Canvas
       dpr={[1, dprMax]}
@@ -131,16 +151,36 @@ export default function Scene() {
       <FovFit mobile={isMobile} />
 
       {/* Same corridor geometry on every device — mobile framing comes from
-          the Rig's portrait step-in, not from squashing the world. */}
+          the Rig's portrait step-in, not from squashing the world.
+
+          Suspense is SPLIT so the world streams in front-to-back instead of
+          all-or-nothing: the shell boundary resolves on just kit-wall +
+          kit-floor (~15 KB with colormap.png), then each content group pops
+          in as its own assets land. The Airlock — the p=0 hero — is outside
+          Suspense entirely: it never suspends (all CanvasTexture), so the
+          docking door renders on the canvas's first frame. */}
       <Suspense fallback={null}>
+        {/* corridor shell: gates the first paint, so keep it models-light.
+            Corridor + BulkheadGates are procedural (never suspend) and ride
+            along so the whole hull appears as one piece. */}
         <KitShell />
         <Corridor />
-        <Walls animate={!reduced} mobile={isMobile} />
-        <FeatureScreen />
-        <Windows />
         <BulkheadGates />
+      </Suspense>
+      <Suspense fallback={null}>
+        <Walls animate={!reduced} mobile={isMobile} />
+      </Suspense>
+      <Suspense fallback={null}>
+        <FeatureScreen />
+      </Suspense>
+      <Suspense fallback={null}>
+        <Windows />
+      </Suspense>
+      <Suspense fallback={null}>
         <Lobby />
-        <Airlock />
+      </Suspense>
+      <Airlock />
+      <Suspense fallback={null}>
         <Drone mobile={isMobile} />
       </Suspense>
 

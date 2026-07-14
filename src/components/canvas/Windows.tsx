@@ -236,7 +236,8 @@ function makeRakeTexture(): THREE.CanvasTexture {
 // "Astronaut" by PW Wu (poly.pizza/m/erlAEWfFKH3, CC-BY 3.0 — credited in the
 // Contact section). Proper EVA suit + dark visor, authored mid-float.
 const PILOT_URL = withBase("/models/astronaut.glb");
-useGLTF.preload(PILOT_URL);
+// No module-scope preload: staged in ModelLoader's preloadDeferredModels()
+// (idle-time) — the 1.2 MB gag prop must not gate the corridor shell.
 
 const PILOT_H = 0.58; // mini — reads as "someone out there", not a mannequin
 // x 0.92 (not pane-centre 1.14): keeps him + his name tag inside the NARROW

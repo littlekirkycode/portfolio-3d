@@ -55,7 +55,32 @@ const MODELS = [
 
 export type ModelName = (typeof MODELS)[number];
 const urlFor = (n: ModelName) => withBase(`/models/${n}.glb`);
-MODELS.forEach((n) => useGLTF.preload(urlFor(n)));
+
+// Staged preloads: ONLY the two kit pieces warm up at module scope — they
+// (plus colormap.png, fetched by their GLTF load) are everything the p=0
+// corridor shell needs, and they must not share bandwidth with ~1.1 MB of
+// props during the first paint. Everything else kicks off post-mount via
+// preloadDeferredModels() (requestIdleCallback effect in Scene.tsx).
+const SHELL_MODELS: readonly ModelName[] = ["kit-wall", "kit-floor"];
+SHELL_MODELS.forEach((n) => useGLTF.preload(urlFor(n)));
+
+let deferredPreloadKicked = false;
+/**
+ * Idle-time warm-up for every GLB the first paint doesn't need. Safe to call
+ * more than once (no-op after the first). Components that suspend on these
+ * models still fetch on demand if they mount first — useGLTF dedupes by URL.
+ */
+export function preloadDeferredModels() {
+  if (deferredPreloadKicked) return;
+  deferredPreloadKicked = true;
+  MODELS.forEach((n) => {
+    if (!SHELL_MODELS.includes(n)) useGLTF.preload(urlFor(n));
+  });
+  // Owned by Windows.tsx (not in MODELS) — its module-scope preload moved
+  // here so the 1.2 MB gag prop never competes with the shell. drone.glb is
+  // already covered by the MODELS loop above (Drone.tsx's preload also moved).
+  useGLTF.preload(withBase("/models/astronaut.glb"));
+}
 
 /**
  * Loads a GLB, clones it (so it can be reused across rooms), and places it.

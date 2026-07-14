@@ -37,7 +37,8 @@ import { withBase } from "@/lib/asset";
  */
 
 const DRONE_URL = withBase("/models/drone.glb");
-useGLTF.preload(DRONE_URL);
+// No module-scope preload: staged in ModelLoader's preloadDeferredModels()
+// (idle-time) so the drone never competes with the corridor shell's fetch.
 
 // how far (in progress units) the drone leads the camera
 const LEAD = 0.035;
