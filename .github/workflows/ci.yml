@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - master
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Mirror the deploy workflow's base path so `next build` here exercises
+      # the same config path a production deploy would.
+      NEXT_PUBLIC_BASE_PATH: /portfolio-3d
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - name: Typecheck
+        # `next typegen` generates the route-type declarations (and
+        # next-env.d.ts) that `tsc --noEmit` needs, without running a full
+        # build — see node_modules/next/dist/docs/01-app/03-api-reference/06-cli/next.md
+        # ("next typegen && tsc --noEmit").
+        run: npx next typegen && npx tsc --noEmit
+      - name: Audit (fail on high/critical)
+        run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run build

@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Framework/deps: weekly, with minor+patch grouped into a single PR to keep
+  # solo-maintainer noise low. Exact-pinned deps (next/react/react-dom) are
+  # edited directly by Dependabot even without a caret range.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Actions used by deploy.yml/ci.yml are major-tag pinned (e.g. @v4); this
+  # surfaces major-version bumps and advisories against them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

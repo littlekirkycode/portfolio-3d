@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code local (per-machine) settings — .claude/settings.json is the
+# shareable/tracked variant.
+.claude/settings.local.json
