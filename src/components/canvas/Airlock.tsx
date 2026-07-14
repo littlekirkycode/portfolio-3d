@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { scrollRefs } from "@/lib/scrollStore";
@@ -41,108 +41,132 @@ function familyVar(varName: string, fallback: string): string {
 }
 
 /** One door half's face, drawn to a CanvasTexture. `side` −1 = viewer-left
- *  (seam on the canvas's right edge), +1 = viewer-right (seam on the left). */
+ *  (seam on the canvas's right edge), +1 = viewer-right (seam on the left).
+ *  Drawn once, then REDRAWN after document.fonts.ready (Walls.tsx pattern,
+ *  finding 14): the KIRKHAM·01 stencil is the p=0 money shot, and it used to
+ *  bake the fallback font for the whole session whenever the woff2 lost the
+ *  race to the scene chunk. */
 function useFaceTexture(side: -1 | 1): THREE.CanvasTexture {
-  return useMemo(() => {
-    const W = 672;
-    const H = 640;
+  const texture = useMemo(() => {
     const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
-    const ctx = c.getContext("2d")!;
-    const mono = familyVar("--ff-mono", "ui-monospace, monospace");
-
-    // dark steel base + subtle panel lines
-    ctx.fillStyle = "#0c0d13";
-    ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = "rgba(255,255,255,0.06)";
-    ctx.lineWidth = 2;
-    for (const y of [H * 0.18, H * 0.5, H * 0.86]) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
-    }
-    // rivets along the panel lines
-    ctx.fillStyle = "rgba(255,255,255,0.08)";
-    for (const y of [H * 0.18, H * 0.86]) {
-      for (let x = 36; x < W; x += 90) {
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // chevron hazard band (clipped, 45° stripes)
-    const bandY = H * 0.6;
-    const bandH = H * 0.15;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, bandY, W, bandH);
-    ctx.clip();
-    ctx.fillStyle = "#0e0f16";
-    ctx.fillRect(0, bandY, W, bandH);
-    ctx.fillStyle = AMBER;
-    ctx.globalAlpha = 0.9;
-    for (let x = -H; x < W + H; x += 96) {
-      ctx.beginPath();
-      ctx.moveTo(x, bandY + bandH);
-      ctx.lineTo(x + 48, bandY + bandH);
-      ctx.lineTo(x + 48 + bandH, bandY);
-      ctx.lineTo(x + bandH, bandY);
-      ctx.closePath();
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-    ctx.restore();
-    ctx.strokeStyle = "rgba(233,185,73,0.5)";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-4, bandY, W + 8, bandH);
-
-    // KIRKHAM·01 stencil — one run of text continuing across the seam:
-    // each half draws the full string centred ON the seam edge and lets the
-    // canvas clip its own half.
-    ctx.font = `700 92px ${mono}`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.fillStyle = INK;
-    const seamX = side < 0 ? W : 0;
-    ctx.fillText("KIRKHAM·01", seamX, H * 0.4);
-
-    // small mono readouts (dry, tasteful). The p=0 camera only sees ±1.5 world
-    // units (≈240 canvas px per half) around the seam and y ≈ 0.8–2.5, so every
-    // line meant for the first frame is anchored to the SEAM — the outer-edge
-    // annotations are texture detail for the walk-through, not the money shot.
-    ctx.textAlign = side < 0 ? "left" : "right";
-    ctx.font = `500 24px ${mono}`;
-    ctx.fillStyle = "rgba(244,241,234,0.55)";
-    if (side < 0) {
-      ctx.fillText("AIRLOCK A-01 — OUTER DOOR", 32, H * 0.09);
-    } else {
-      ctx.fillText("PRESSURE: 101.3 kPa — NOMINAL", W - 32, H * 0.09);
-    }
-
-    // yellow caution line under the chevron band — ONE run continuing across
-    // the seam: like the stencil, each half draws it centred on its seam edge
-    // and clips its own part, so it can never read as an accidental crop.
-    ctx.textAlign = "center";
-    ctx.font = `500 20px ${mono}`;
-    ctx.fillStyle = "rgba(233,185,73,0.75)";
-    ctx.fillText("CYCLE LOCK BEFORE ENTRY", seamX, H * 0.775);
-
-    // dry aside in the clear band between the stencil and the chevrons, tight
-    // to the seam (the status lamp mirrors it on the other door half)
-    if (side < 0) {
-      ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(233,185,73,0.6)";
-      ctx.fillText("MIND THE DRONE", W - 40, H * 0.53);
-    }
-
+    c.width = 672;
+    c.height = 640;
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
     return tex;
-  }, [side]);
+  }, []);
+
+  useEffect(() => {
+    const c = texture.image as HTMLCanvasElement;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    let cancelled = false;
+
+    const draw = () => {
+      const W = c.width;
+      const H = c.height;
+      const mono = familyVar("--ff-mono", "ui-monospace, monospace");
+
+      // dark steel base + subtle panel lines
+      ctx.fillStyle = "#0c0d13";
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 2;
+      for (const y of [H * 0.18, H * 0.5, H * 0.86]) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+      // rivets along the panel lines
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      for (const y of [H * 0.18, H * 0.86]) {
+        for (let x = 36; x < W; x += 90) {
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // chevron hazard band (clipped, 45° stripes)
+      const bandY = H * 0.6;
+      const bandH = H * 0.15;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, bandY, W, bandH);
+      ctx.clip();
+      ctx.fillStyle = "#0e0f16";
+      ctx.fillRect(0, bandY, W, bandH);
+      ctx.fillStyle = AMBER;
+      ctx.globalAlpha = 0.9;
+      for (let x = -H; x < W + H; x += 96) {
+        ctx.beginPath();
+        ctx.moveTo(x, bandY + bandH);
+        ctx.lineTo(x + 48, bandY + bandH);
+        ctx.lineTo(x + 48 + bandH, bandY);
+        ctx.lineTo(x + bandH, bandY);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      ctx.strokeStyle = "rgba(233,185,73,0.5)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-4, bandY, W + 8, bandH);
+
+      // KIRKHAM·01 stencil — one run of text continuing across the seam:
+      // each half draws the full string centred ON the seam edge and lets the
+      // canvas clip its own half.
+      ctx.font = `700 92px ${mono}`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      ctx.fillStyle = INK;
+      const seamX = side < 0 ? W : 0;
+      ctx.fillText("KIRKHAM·01", seamX, H * 0.4);
+
+      // small mono readouts (dry, tasteful). The p=0 camera only sees ±1.5 world
+      // units (≈240 canvas px per half) around the seam and y ≈ 0.8–2.5, so every
+      // line meant for the first frame is anchored to the SEAM — the outer-edge
+      // annotations are texture detail for the walk-through, not the money shot.
+      ctx.textAlign = side < 0 ? "left" : "right";
+      ctx.font = `500 24px ${mono}`;
+      ctx.fillStyle = "rgba(244,241,234,0.55)";
+      if (side < 0) {
+        ctx.fillText("AIRLOCK A-01 — OUTER DOOR", 32, H * 0.09);
+      } else {
+        ctx.fillText("PRESSURE: 101.3 kPa — NOMINAL", W - 32, H * 0.09);
+      }
+
+      // yellow caution line under the chevron band — ONE run continuing across
+      // the seam: like the stencil, each half draws it centred on its seam edge
+      // and clips its own part, so it can never read as an accidental crop.
+      ctx.textAlign = "center";
+      ctx.font = `500 20px ${mono}`;
+      ctx.fillStyle = "rgba(233,185,73,0.75)";
+      ctx.fillText("CYCLE LOCK BEFORE ENTRY", seamX, H * 0.775);
+
+      // dry aside in the clear band between the stencil and the chevrons, tight
+      // to the seam (the status lamp mirrors it on the other door half)
+      if (side < 0) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = "rgba(233,185,73,0.6)";
+        ctx.fillText("MIND THE DRONE", W - 40, H * 0.53);
+      }
+
+      texture.needsUpdate = true;
+    };
+
+    draw();
+    if ("fonts" in document) {
+      document.fonts.ready.then(() => !cancelled && draw()).catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [texture, side]);
+
+  return texture;
 }
 
 export default function Airlock() {

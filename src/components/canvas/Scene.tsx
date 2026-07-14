@@ -5,7 +5,7 @@ import { PerformanceMonitor } from "@react-three/drei";
 import { Suspense, useEffect, useState } from "react";
 import * as THREE from "three";
 import type { PerspectiveCamera } from "three";
-import { useIsMobile } from "@/lib/useIsMobile";
+import { useIsMobile, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import Rig from "./Rig";
 import Corridor from "./Corridor";
@@ -63,19 +63,29 @@ function FovFit({ mobile }: { mobile: boolean }) {
  * project. Camera dolly lives in <Rig/>.
  *
  * Performance: AdaptiveDpr + PerformanceMonitor scale resolution under load; the
- * render loop pauses while the tab is hidden; reduced-motion freezes the camera
- * and removes the post stack.
+ * render loop pauses while the tab is hidden; reduced-motion keeps the camera
+ * scroll-mapped but strips all time-based easing (see Rig) and removes the
+ * post stack.
  */
 export default function Scene() {
   const isMobile = useIsMobile();
   const reduced = useReducedMotion();
 
-  // Mobile cap raised 1.5 → 2: phones are ≥3× native, and 1.5 rendered the
-  // canvas-texture panels visibly soft ("mobile looks worse"). The
-  // PerformanceMonitor still steps down under real load.
-  const [dprMax, setDprMax] = useState(2);
+  // Mobile BOOTS at 1.5 and EARNS 2: starting phones at dpr 2 paid the
+  // worst-case pixel cost through the whole post chain during the first
+  // seconds (exactly the first-impression window), and the old regulation was
+  // reactive-only — it dropped dpr only after visible jank (finding 5). Now
+  // PerformanceMonitor's onIncline (+0.25, capped at 2) climbs capable phones
+  // back to full sharpness within a few seconds, so the "canvas panels
+  // visibly soft at 1.5" QA note still lands where it matters — steady state.
+  // Desktop keeps its cap at 2 from the first frame. (matchMedia, not the
+  // isMobile state, so the mobile boot never renders a dpr-2 frame while the
+  // useIsMobile effect is still settling.)
+  const [dprMax, setDprMax] = useState(() =>
+    window.matchMedia(MOBILE_MEDIA_QUERY).matches ? 1.5 : 2,
+  );
   useEffect(() => {
-    setDprMax(2);
+    setDprMax(window.matchMedia(MOBILE_MEDIA_QUERY).matches ? 1.5 : 2);
   }, [isMobile]);
 
   const [visible, setVisible] = useState(true);
@@ -118,9 +128,15 @@ export default function Scene() {
       // coords do. (This module is ssr:false — document exists at render.)
       eventSource={document.body}
       eventPrefix="client"
-      onCreated={({ gl, scene }) => {
+      onCreated={({ gl, scene, invalidate }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.25;
+        // Context-loss resilience (finding 28): preventDefault signals the
+        // browser we can handle a restore (common under mobile-Safari memory
+        // pressure); on restore, poke the frameloop so rendering resumes
+        // immediately instead of waiting for the next external invalidation.
+        gl.domElement.addEventListener("webglcontextlost", (e) => e.preventDefault());
+        gl.domElement.addEventListener("webglcontextrestored", () => invalidate());
         // Debug/verify hook (screenshot harness scene probes — see Rig's
         // __rig). NON-ENUMERABLE: dev tooling that walks/serialises window
         // globals chokes on the scene graph's circular parent/children refs

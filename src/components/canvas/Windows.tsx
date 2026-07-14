@@ -296,10 +296,13 @@ function SpacewalkPilot() {
     const centre = new THREE.Vector3();
     box2.getCenter(centre);
     c.position.sub(centre); // spin about his middle, like real bad EVA luck
+    // NOTE: no frustumCulled=false — the joined astronaut is 8 plain (unskinned)
+    // meshes whose bounding spheres three transforms by the world matrix (scale
+    // included), so normal culling is correct. Submission from down the corridor
+    // is gated by the .visible toggle in useFrame below anyway (finding 4).
     c.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.frustumCulled = false; // bounds go stale under the re-scale
       // keep the suit's own baked colours; starlit emissive lift so he stays
       // readable against the void (materials belong to this GLB alone)
       const mat = mesh.material as THREE.MeshStandardMaterial;
@@ -313,10 +316,21 @@ function SpacewalkPilot() {
 
   const labelTex = useMemo(makePilotLabelTexture, []);
 
-  useFrame((_, rawDt) => {
+  useFrame(({ camera }, rawDt) => {
     const d = drift.current;
     const tb = tumble.current;
     if (!d || !tb) return;
+    // Gallery-only gag: only submit the pilot's meshes when the glazing is
+    // anywhere near frame (he used to draw from the whole corridor with
+    // culling disabled — finding 4). Hysteresis avoids threshold flicker;
+    // the swap happens far behind the fog.
+    const dist = Math.abs(camera.position.x - GALLERY_X);
+    if (d.visible) {
+      if (dist > 40) d.visible = false;
+    } else if (dist < 37) {
+      d.visible = true;
+    }
+    if (!d.visible) return;
     if (reduced) {
       // parked at a jaunty off-axis angle — still tells the joke, no motion
       tb.rotation.set(0.15, 0, 0.55);

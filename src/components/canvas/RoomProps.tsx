@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
 import type { RoomTheme } from "@/lib/constants";
 import { withBase } from "@/lib/asset";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { Bob, Model, SpinY } from "./ModelLoader";
 
 /** Shared soft radial gradient for the plinth under-glow pucks — one canvas
@@ -283,13 +284,19 @@ const FLOOR_ART: Record<RoomTheme, FloorArt> = {
  *  alcove floor with the mat's footprint cleared out (the accent platform
  *  stays the hero; the deck reads at the flanks + under the treadmill). */
 function GymDeck({ accent }: { accent: string }) {
+  const mobile = useIsMobile();
   const tex = useMemo(() => {
+    // Mobile: half-res backing store + lower anisotropy (finding 6) — the
+    // ctx.scale keeps the drawn grid layout identical, only the texel density
+    // drops (a faint deck grid never resolves above this on a portrait frame).
+    const scale = mobile ? 0.5 : 1;
     const W = 1024;
     const H = 512; // maps the 7.9 × 3.95 alcove floor (129.6 px per world unit)
     const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
+    c.width = W * scale;
+    c.height = H * scale;
     const ctx = c.getContext("2d")!;
+    ctx.scale(scale, scale);
     ctx.fillStyle = "rgba(14,16,24,0.5)";
     ctx.fillRect(0, 0, W, H);
     for (let i = 0; i * 64.8 <= W; i++) {
@@ -305,9 +312,9 @@ function GymDeck({ accent }: { accent: string }) {
     ctx.clearRect(512 - 311, 217 - 240, 622, 480);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 8;
+    t.anisotropy = mobile ? 4 : 8;
     return t;
-  }, [accent]);
+  }, [accent, mobile]);
   return (
     <mesh position={[0, 0.025, 0.45]} rotation-x={-Math.PI / 2}>
       <planeGeometry args={[7.9, 3.95]} />
@@ -318,20 +325,26 @@ function GymDeck({ accent }: { accent: string }) {
 
 function FloorStory({ theme, accent }: { theme: RoomTheme; accent: string }) {
   const art = FLOOR_ART[theme];
+  const mobile = useIsMobile();
   const tex = useMemo(() => {
+    // Half-res + capped anisotropy on mobile (finding 6); ctx.scale keeps the
+    // painted layout identical. These are deliberately faint deck markings —
+    // texel density is not what makes them read.
+    const scale = mobile ? 0.5 : 1;
     const W = 512;
     const H = Math.round((W * art.d) / art.w);
     const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
+    c.width = W * scale;
+    c.height = Math.round(H * scale);
     const ctx = c.getContext("2d")!;
+    ctx.scale(scale, scale);
     ctx.clearRect(0, 0, W, H);
     art.draw(ctx, W, H, accent);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 8;
+    t.anisotropy = mobile ? 4 : 8;
     return t;
-  }, [art, accent]);
+  }, [art, accent, mobile]);
   return (
     /* y 0.05: above the mat slab + rim (~0.02) — flush to the eye, no z-fight */
     <mesh position={[art.cx, 0.05, art.cz]} rotation-x={-Math.PI / 2}>

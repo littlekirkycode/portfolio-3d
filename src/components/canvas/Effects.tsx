@@ -11,14 +11,15 @@ import {
   SMAA,
 } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef, type JSX } from "react";
 import * as THREE from "three";
 import { scrollRefs } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
 
 type EffectsProps = {
-  /** Lighter pass on mobile (cheaper bloom, no grain). */
+  /** Lighter chain on mobile: cheaper bloom, no grain, no chromatic
+   *  aberration, and SMAA shed once dpr climbs past 1.75. */
   mobile?: boolean;
 };
 
@@ -35,6 +36,9 @@ type CAHandle = { offset: THREE.Vector2 };
  * This whole component is unmounted by <Scene> under reduced motion.
  */
 export default function Effects({ mobile = false }: EffectsProps) {
+  // Live DPR (tracks PerformanceMonitor's dprMax regulation in Scene) — used
+  // to shed the SMAA pass on phones once the buffer is dense enough.
+  const dpr = useThree((s) => s.viewport.dpr);
   // Ref to the underlying ChromaticAberrationEffect instance (loosely typed by drei).
   const caRef = useRef<CAHandle | null>(null);
   const smear = useRef(0);
@@ -57,10 +61,18 @@ export default function Effects({ mobile = false }: EffectsProps) {
   });
 
   // Build the pass list explicitly so the children type stays JSX.Element[].
-  const passes: JSX.Element[] = [
-    // Edge antialiasing — the canvas runs antialias:false for perf, so without
-    // this the screens / thin text alias and "fuzz" at distance.
-    <SMAA key="smaa" />,
+  const passes: JSX.Element[] = [];
+
+  // Edge antialiasing — the canvas runs antialias:false for perf, so without
+  // this the screens / thin text alias and "fuzz" at distance. On mobile at
+  // dpr ≥ 1.75 (≈3x+ downsampled physical pixels) its edge cleanup is barely
+  // visible while still costing a full-screen multi-target pass — shed it
+  // once PerformanceMonitor has climbed the buffer that dense (finding 5).
+  if (!mobile || dpr < 1.75) {
+    passes.push(<SMAA key="smaa" />);
+  }
+
+  passes.push(
     <Bloom
       key="bloom"
       intensity={mobile ? 0.55 : 0.8}
@@ -84,18 +96,22 @@ export default function Effects({ mobile = false }: EffectsProps) {
     // empirically bisected pass-by-pass, July 2026).
     <HueSaturation key="grade-hs" saturation={0.07} />,
     <BrightnessContrast key="grade-bc" brightness={-0.02} contrast={0.07} />,
-    <ChromaticAberration
-      key="ca"
-      ref={caRef}
-      blendFunction={BlendFunction.NORMAL}
-      offset={caOffset}
-      radialModulation
-      modulationOffset={0.4}
-    />,
-  ];
+  );
 
   if (!mobile) {
     passes.push(
+      // Velocity smear — desktop only (finding 5): under native touch scroll
+      // the smear practically never triggers, and the resting base offset is
+      // sub-pixel, so on phones the pass costs a full-screen resolve for no
+      // visible payoff.
+      <ChromaticAberration
+        key="ca"
+        ref={caRef}
+        blendFunction={BlendFunction.NORMAL}
+        offset={caOffset}
+        radialModulation
+        modulationOffset={0.4}
+      />,
       // Grain kept faint — OVERLAY amplifies on bright regions, and at 0.045
       // it read as black-speckle "dither corruption" on phone screens and
       // white props (QA slot0/slot1).

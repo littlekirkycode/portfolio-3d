@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
@@ -74,7 +74,7 @@ export default function FeatureScreen() {
   const urls = useMemo(() => withImg.map((p) => withBase(p.image as string)), [withImg]);
   const texs = useTexture(urls);
 
-  const frames: THREE.Texture[] = useMemo(() => {
+  const frameBundle = useMemo(() => {
     const list = Array.isArray(texs) ? texs : [texs];
     const imgByUrl: Record<string, HTMLImageElement> = {};
     withImg.forEach((p, i) => {
@@ -83,11 +83,9 @@ export default function FeatureScreen() {
     const ser = familyVar("--ff-display", "Georgia, serif");
     const mono = familyVar("--ff-mono", "ui-monospace, monospace");
     const sans = familyVar("--ff-body", "system-ui, sans-serif");
-    return PROJECTS.map((p, i) => {
-      const c = document.createElement("canvas");
-      c.width = 1600;
-      c.height = 900;
-      const ctx = c.getContext("2d")!;
+    // The painter is idempotent (full-canvas fill first) so the fonts.ready
+    // effect below can re-run it over the same canvases once webfonts land.
+    const paint = (ctx: CanvasRenderingContext2D, p: (typeof PROJECTS)[number], i: number) => {
       const acc = p.accent;
 
       // lifted base (~1.5 stops over the old near-black) + a diagonal accent
@@ -279,7 +277,13 @@ export default function FeatureScreen() {
       vig.addColorStop(1, "rgba(0,0,0,0.30)");
       ctx.fillStyle = vig;
       ctx.fillRect(0, 0, 1600, 900);
+    };
 
+    const textures = PROJECTS.map((p, i) => {
+      const c = document.createElement("canvas");
+      c.width = 1600;
+      c.height = 900;
+      paint(c.getContext("2d")!, p, i);
       const tex = new THREE.CanvasTexture(c);
       // IMPORTANT: leave the texture UNTAGGED (NoColorSpace). screenFragment's
       // samp() does its own pow(2.2) decode; tagging this sRGB made three.js
@@ -289,7 +293,31 @@ export default function FeatureScreen() {
       tex.anisotropy = 16;
       return tex;
     });
+    return { textures, paint };
   }, [texs, withImg]);
+  const frames = frameBundle.textures;
+
+  // Redraw every slide after document.fonts.ready (Walls.tsx pattern, finding
+  // 14): on a cold cache with fast JS / slow font path the showreel baked its
+  // serif/mono type in the fallback fonts for the whole session.
+  useEffect(() => {
+    if (typeof document === "undefined" || !("fonts" in document)) return;
+    let cancelled = false;
+    document.fonts.ready
+      .then(() => {
+        if (cancelled) return;
+        frameBundle.textures.forEach((tex, i) => {
+          const ctx = (tex.image as HTMLCanvasElement).getContext("2d");
+          if (!ctx) return;
+          frameBundle.paint(ctx, PROJECTS[i], i);
+          tex.needsUpdate = true;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [frameBundle]);
 
   const matRef = useRef<THREE.ShaderMaterial>(null);
   const screenRef = useRef<THREE.Group>(null);

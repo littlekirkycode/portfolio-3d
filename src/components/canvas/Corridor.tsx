@@ -289,8 +289,24 @@ function Bridge() {
   const pipsTex = usePipsTexture();
   const pipMat = useRef<THREE.MeshBasicMaterial>(null);
   const tRef = useRef(0);
+  const gatedRef = useRef<THREE.Group>(null);
 
-  useFrame((_, rawDt) => {
+  useFrame(({ camera }, rawDt) => {
+    // Distance gate (finding 3): the bridge sits behind the fog (and mostly
+    // past the far plane) for the whole corridor walk — skip submitting its
+    // ~40 draws and its star/pip ticks until the camera closes in. Hysteresis
+    // avoids threshold flicker. The spill pointLight stays OUTSIDE this group:
+    // a light-count change recompiles every lit material mid-scroll.
+    const g = gatedRef.current;
+    if (g) {
+      const d = Math.abs(END_X - camera.position.x);
+      if (g.visible) {
+        if (d > 40) g.visible = false;
+      } else if (d < 37) {
+        g.visible = true;
+      }
+      if (!g.visible) return;
+    }
     updateStarUniforms(uni, rawDt, fxRefs.warp);
     tRef.current += Math.min(rawDt, 1 / 30);
     const pm = pipMat.current;
@@ -302,6 +318,11 @@ function Bridge() {
   const cz = Math.cos(PANEL_YAW);
   return (
     <group>
+      {/* cool spill back toward the camera (starlight through the glass) —
+          NEVER gated: the mounted-light count must stay constant */}
+      <pointLight position={[END_X - 2.6, 1.8, 0]} color="#bcd4ff" intensity={26} distance={28} decay={2} />
+
+      <group ref={gatedRef}>
       {/* dark surround behind the canopy */}
       <mesh position={[END_X + 1.6, cy, 0]} rotation-y={-Math.PI / 2}>
         <planeGeometry args={[HALF_W * 2 + 3.5, WALL_H + 1]} />
@@ -390,9 +411,7 @@ function Bridge() {
         // harness capture it through its window.open stub without navigating
         activate={() => window.open(`mailto:${SITE.email}`, "_self")}
       />
-
-      {/* cool spill back toward the camera (starlight through the glass) */}
-      <pointLight position={[END_X - 2.6, 1.8, 0]} color="#bcd4ff" intensity={26} distance={28} decay={2} />
+      </group>
     </group>
   );
 }

@@ -6,6 +6,8 @@ import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { SKILLS, ACHIEVEMENTS, EXPERIENCE, ALLIED_ROOM, type Project, type RoomTheme } from "@/lib/constants";
 import { withBase } from "@/lib/asset";
+import { scrollRefs } from "@/lib/scrollStore";
+import { useIsMobile } from "@/lib/useIsMobile";
 import {
   HALF_W,
   WALL_H,
@@ -15,6 +17,7 @@ import {
   GALLERY_X,
   GALLERY_SPAN,
   GALLERY_SIDE,
+  focusAt,
   type Room,
 } from "./hallConfig";
 import { screenVertex, screenFragment } from "./shaders";
@@ -70,20 +73,28 @@ function useTextTexture(
   height: number,
   render: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
 ): THREE.CanvasTexture {
+  // Mobile: half-resolution backing store + anisotropy 4. The portrait camera
+  // never resolves these panels above ~half their desktop texel count, and the
+  // 4+ RGBA canvas textures per bay are the biggest GPU-memory line item
+  // (finding 6). ctx.setTransform scales EVERY painter's coordinates/fonts, so
+  // the drawn layout is identical — only the backing resolution drops.
+  const mobile = useIsMobile();
+  const scale = mobile ? 0.5 : 1;
   const texture = useMemo(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 16;
+    tex.anisotropy = scale === 1 ? 16 : 4;
     return tex;
-  }, [width, height]);
+  }, [width, height, scale]);
   useEffect(() => {
     const ctx = (texture.image as HTMLCanvasElement).getContext("2d");
     if (!ctx) return;
     let cancelled = false;
     const draw = () => {
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
       ctx.clearRect(0, 0, width, height);
       render(ctx, width, height);
       texture.needsUpdate = true;
@@ -95,7 +106,7 @@ function useTextTexture(
     return () => {
       cancelled = true;
     };
-  }, [texture, render, width, height]);
+  }, [texture, render, width, height, scale]);
   return texture;
 }
 
@@ -126,6 +137,7 @@ const IMG_H = 3.0;
 /** The live app screen: a flat glass plane running the screen shader with a
  *  cinematic dissolve/slide between gallery shots. Used inside PhoneFrame. */
 function ScreenImage({ project, animate, trans = 0 }: { project: Project; animate: boolean; trans?: number }) {
+  const mobile = useIsMobile();
   const urls = useMemo(
     () => [project.image as string, ...(project.gallery ?? [])].map(withBase),
     [project],
@@ -134,11 +146,13 @@ function ScreenImage({ project, animate, trans = 0 }: { project: Project; animat
   const list = useMemo(() => {
     const arr = Array.isArray(loaded) ? loaded : [loaded];
     arr.forEach((t) => {
-      t.anisotropy = 16;
+      // anisotropy capped on mobile (finding 6) — the phone screens are viewed
+      // near head-on there, so the high-tap filtering never pays for itself
+      t.anisotropy = mobile ? 4 : 16;
       t.needsUpdate = true;
     });
     return arr;
-  }, [loaded]);
+  }, [loaded, mobile]);
   const matRef = useRef<THREE.ShaderMaterial>(null);
   const tRef = useRef(0);
   const idx = useRef(0);
@@ -1189,21 +1203,133 @@ const BAY_VARIANTS = [
   { lightBase: "#fff4e8", lightLerp: 0.45, lightIntensity: 4.5, screenScale: 0.92, screenY: 2.15 },
 ];
 
+/* ── focused-bay light pool ────────────────────────────────────────────────
+ * The bays used to mount 4 pointLights EACH — 36 lights that every lit
+ * fragment in the scene iterated, every frame (three.js uploads ALL visible
+ * lights as one uniform array; `distance` only bounds the falloff math, not
+ * the loop). ONE fixed pool of 4 lights now serves whichever bay is focused:
+ * a useFrame repositions/retints the pool to the focused room's recipe and
+ * scales intensity by focusAt's ease, so the light fades in with the head-
+ * turn and the retarget always happens while the pool is dark. Unfocused
+ * bays go unlit — by design: behind fog + grazing angles only their emissive
+ * dressing (opening frames, jambs, screens) reads from the corridor anyway.
+ *
+ * INVARIANT (three.js): the number of mounted lights must stay compile-time
+ * constant. The renderer keys its shader-program cache on light COUNT, so
+ * mounting/unmounting or .visible-toggling a light recompiles every lit
+ * material mid-scroll (a visible hitch). Dim with intensity=0 instead, and
+ * never put a light inside a visibility-gated group.
+ */
+
+const POOL_SLOTS = [
+  // Local-space alcove positions + falloff, mirroring the old per-bay rig 1:1:
+  // warm room light, screen accent, panel accent, neutral prop fill.
+  { pos: [0, 2.2, -ALCOVE_DEPTH + 1.7], distance: ALCOVE_DEPTH + 5 },
+  { pos: [-1.55, 1.95, -ALCOVE_DEPTH + 1.0], distance: 4.5 },
+  { pos: [1.55, 1.8, -0.9], distance: 3.5 },
+  { pos: [0, 1.5, -ALCOVE_DEPTH + 2.5], distance: 5.5 },
+] as const;
+
+const PROP_FILL_TINT = /* @__PURE__ */ new THREE.Color("#eef1f8");
+
+type BayLightSpec = { pos: THREE.Vector3; color: THREE.Color; intensity: number };
+
+/** Per-room 4-light recipes in WORLD space (the pool mounts at the scene root,
+ *  not inside the mirrored/rotated alcove groups). Alcove groups sit at
+ *  [room.x, 0, side*HALF_W] with rotY 0 (-z side) or PI (+z side); the PI turn
+ *  mirrors local x AND z. */
+const BAY_LIGHT_RECIPES: BayLightSpec[][] = ROOMS.map((room) => {
+  const cfg = BAY_VARIANTS[room.variant];
+  const warm = new THREE.Color(cfg.lightBase).lerp(new THREE.Color(room.accent), cfg.lightLerp);
+  const accent = new THREE.Color(room.accent);
+  const m = room.side < 0 ? 1 : -1;
+  const world = ([lx, ly, lz]: readonly [number, number, number]) =>
+    new THREE.Vector3(room.x + m * lx, ly, room.side * HALF_W + m * lz);
+  const tints = [warm, accent, accent, PROP_FILL_TINT];
+  const intensities = [cfg.lightIntensity, 4.5, 3, 5.5];
+  return POOL_SLOTS.map((slot, i) => ({
+    pos: world(slot.pos),
+    color: tints[i],
+    intensity: intensities[i],
+  }));
+});
+
+function BayLightPool() {
+  const lights = useRef<(THREE.PointLight | null)[]>([]);
+  const roomIdx = useRef(-1);
+  useFrame(() => {
+    const f = focusAt(scrollRefs.progress);
+    const idx = f.room ? ROOMS.indexOf(f.room) : roomIdx.current;
+    if (idx < 0) return; // before the first focus band: pool parked dark
+    const recipe = BAY_LIGHT_RECIPES[idx];
+    if (idx !== roomIdx.current) {
+      // retarget while dark — ease is 0 whenever the focused room changes
+      roomIdx.current = idx;
+      recipe.forEach((spec, i) => {
+        const l = lights.current[i];
+        if (!l) return;
+        l.position.copy(spec.pos);
+        l.color.copy(spec.color);
+      });
+    }
+    recipe.forEach((spec, i) => {
+      const l = lights.current[i];
+      if (l) l.intensity = spec.intensity * f.ease;
+    });
+  });
+  return (
+    <>
+      {POOL_SLOTS.map((slot, i) => (
+        <pointLight
+          key={i}
+          ref={(el) => {
+            lights.current[i] = el;
+          }}
+          intensity={0}
+          distance={slot.distance}
+          decay={2}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Bay-content distance gate: past HIDE the recessed interior is invisible
+ *  from the corridor (grazing angle + fog), so skip submitting its ~40-60
+ *  draws. SHOW < HIDE gives hysteresis so the threshold never flickers. */
+const BAY_HIDE_DIST = 40;
+const BAY_SHOW_DIST = 37;
+
 function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolean; mobile?: boolean }) {
   const z = room.side < 0 ? -HALF_W : HALF_W;
   const rotY = room.side < 0 ? 0 : Math.PI;
   const v = room.variant;
   const cfg = BAY_VARIANTS[v];
-  const warmTint = useMemo(
-    () => new THREE.Color(cfg.lightBase).lerp(new THREE.Color(room.accent), cfg.lightLerp),
-    [room.accent, cfg.lightBase, cfg.lightLerp],
-  );
   const isExp = room.kind === "experience";
+
+  // Distance-gate the bay content (finding 3). The OpeningFrame/AccentSpill
+  // emitters stay OUT of the gated group — they're the corridor-facing
+  // wayfinding you can see from far down the hall — and the bay lights live
+  // in <BayLightPool/> (lights must never be visibility-toggled: light-count
+  // changes recompile every lit material). Mesh .visible toggling is safe.
+  const contentRef = useRef<THREE.Group>(null);
+  useFrame(({ camera }) => {
+    const g = contentRef.current;
+    if (!g) return;
+    const d = Math.abs(camera.position.x - room.x);
+    if (g.visible) {
+      if (d > BAY_HIDE_DIST) g.visible = false;
+    } else if (d < BAY_SHOW_DIST) {
+      g.visible = true;
+    }
+  });
 
   return (
     <group position={[room.x, 0, z]} rotation-y={rotY}>
       <OpeningFrame accent={room.accent} />
       <AccentSpill accent={room.accent} />
+
+      <group ref={contentRef}>
 
       {/* corner pillars — cover the seams where the corridor wall, niche side
           walls and back wall meet (tiled kit pieces don't form a clean corner).
@@ -1283,39 +1409,11 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
       <group position={[0, 0, -ALCOVE_DEPTH + 1.55]}>
         <RoomProps theme={room.theme} accent={room.accent} animate={animate} />
       </group>
+      </group>
 
-      {/* soft room light (low, so the ceiling stays clean — only the corridor line
-          strip reads up top, no circular hotspots) + accent fills */}
-      <pointLight
-        position={[0, 2.2, -ALCOVE_DEPTH + 1.7]}
-        color={warmTint}
-        intensity={cfg.lightIntensity}
-        distance={ALCOVE_DEPTH + 5}
-        decay={2}
-      />
-      <pointLight
-        position={[-1.55, 1.95, -ALCOVE_DEPTH + 1.0]}
-        color={room.accent}
-        intensity={4.5}
-        distance={4.5}
-        decay={2}
-      />
-      <pointLight
-        position={[1.55, 1.8, -0.9]}
-        color={room.accent}
-        intensity={3}
-        distance={3.5}
-        decay={2}
-      />
-      {/* neutral fill on the props so the app-specific objects read clearly —
-          kept moderate: 9 blew white prop materials out to shadeless #FFF */}
-      <pointLight
-        position={[0, 1.5, -ALCOVE_DEPTH + 2.5]}
-        color="#eef1f8"
-        intensity={5.5}
-        distance={5.5}
-        decay={2}
-      />
+      {/* bay lighting comes from the shared <BayLightPool/> — the old four
+          per-bay pointLights (warm room / screen accent / panel accent / prop
+          fill) live on as its per-room recipe (BAY_LIGHT_RECIPES). */}
     </group>
   );
 }
@@ -1323,6 +1421,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
 export default function Walls({ animate = true, mobile = false }: { animate?: boolean; mobile?: boolean }) {
   return (
     <group>
+      <BayLightPool />
       {ROOMS.map((room) => (
         <Alcove key={room.id} room={room} animate={animate} mobile={mobile} />
       ))}

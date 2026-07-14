@@ -64,13 +64,6 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 1 / 30);
 
-    if (frozen) {
-      camera.position.set(cameraXAt(0.05), EYE_Y, 0);
-      camera.rotation.z = 0;
-      camera.lookAt(camera.position.x + 6, EYE_Y, 0);
-      return;
-    }
-
     const p = scrollRefs.progress;
 
     // First frame: SNAP to the scroll-derived position. The Canvas camera
@@ -98,12 +91,21 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
         ff * STEP_FEATURE;
     }
 
-    // Slow, eased motion (low damping) keeps turns lazy + smooth — much less
-    // disorienting than snappy transitions. No velocity FOV kick (nausea trigger).
-    // Camera is driven purely by scroll — the mouse never moves it.
-    camera.position.x = damp(camera.position.x, cameraXAt(p), 4.0, dt);
-    camera.position.z = damp(camera.position.z, zPos, 3, dt);
-    camera.position.y = damp(camera.position.y, EYE_Y, 3, dt);
+    if (frozen) {
+      // Reduced motion (finding 22): the camera stays fully SCROLL-MAPPED —
+      // freezing it locked those users out of every exhibit. Scroll is
+      // user-initiated, so position/look are set DIRECTLY from progress with
+      // zero time-based easing (no damping, no drift); only the residual
+      // motion sources (Effects, prop animation, velocity kicks) stay off.
+      camera.position.set(cameraXAt(p), EYE_Y, zPos);
+    } else {
+      // Slow, eased motion (low damping) keeps turns lazy + smooth — much less
+      // disorienting than snappy transitions. No velocity FOV kick (nausea trigger).
+      // Camera is driven purely by scroll — the mouse never moves it.
+      camera.position.x = damp(camera.position.x, cameraXAt(p), 4.0, dt);
+      camera.position.z = damp(camera.position.z, zPos, 3, dt);
+      camera.position.y = damp(camera.position.y, EYE_Y, 3, dt);
+    }
     // Publish the focused bay (coarse — only on change) so the DOM can show a
     // "Visit project" link for it.
     const fid = f.room && f.ease > 0.85 ? f.room.id : null;
@@ -140,8 +142,14 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
       tx = camera.position.x + 6 + ff * (FEATURE_X - (camera.position.x + 6));
       tz = camera.position.z + ff * (HALF_W - 0.06 + FEATURE_RECESS_DEPTH - camera.position.z);
     }
-    lookX.current = damp(lookX.current, tx, 4.0, dt);
-    lookZ.current = damp(lookZ.current, tz, 4.0, dt);
+    if (frozen) {
+      // un-damped look: the head-turn is a pure function of scroll position
+      lookX.current = tx;
+      lookZ.current = tz;
+    } else {
+      lookX.current = damp(lookX.current, tx, 4.0, dt);
+      lookZ.current = damp(lookZ.current, tz, 4.0, dt);
+    }
     camera.lookAt(lookX.current, EYE_Y, lookZ.current);
 
     // Debug/verify hook (read by the screenshot harness). One stable object
