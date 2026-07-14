@@ -40,6 +40,17 @@ const MODELS = [
   "skyscraper",
   "sportstrophy",
   "drone",
+  // per-room signature props, round two (all Quaternius, CC0, via poly.pizza)
+  "radar",
+  "crown",
+  "spaceship",
+  "mainframe",
+  "arrowsign",
+  // gym fit-out set (CC-BY via poly.pizza — credited in the README)
+  "punchingbag",
+  "gymbike",
+  "gymbench",
+  "barbell",
 ] as const;
 
 export type ModelName = (typeof MODELS)[number];

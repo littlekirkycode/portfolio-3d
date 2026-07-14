@@ -38,4 +38,6 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 ## Asset credits
 
 - Corridor kit + props: [Kenney](https://kenney.nl) (CC0) and [Quaternius](https://quaternius.com) (CC0), incl. the UNIT-07 escort bot ("Robot Enemy Flying", Ultimate Space Kit).
+- Round-two signature props (radar, crown, spaceship, mainframe, arrow sign): Quaternius (CC0), via [poly.pizza](https://poly.pizza).
+- Gym fit-out set (CC-BY 3.0, via poly.pizza): ["Punching bag"](https://poly.pizza/m/aODw_lbKxQP) by Poly by Google, ["Exercise Bike"](https://poly.pizza/m/9DwoznfSPHY) by Dave Edwards, ["Barbell"](https://poly.pizza/m/AX5jGlJZlk) and ["Bench"](https://poly.pizza/m/BpjfpavGY8) by Zsky.
 - Spacewalking pilot: ["Astronaut" by PW Wu](https://poly.pizza/m/erlAEWfFKH3) (CC-BY 3.0), via poly.pizza.
