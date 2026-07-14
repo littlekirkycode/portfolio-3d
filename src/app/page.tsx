@@ -5,10 +5,12 @@ import Contact from "@/components/sections/Contact";
 
 export default function Home() {
   return (
-    <SmoothScrollProvider>
-      <Hero />
-      <Work />
-      <Contact />
-    </SmoothScrollProvider>
+    <main>
+      <SmoothScrollProvider>
+        <Hero />
+        <Work />
+        <Contact />
+      </SmoothScrollProvider>
+    </main>
   );
 }

@@ -8,6 +8,7 @@ import ProgressBar from "@/components/ui/ProgressBar";
 import ProjectLink from "@/components/ui/ProjectLink";
 import MobileStops from "@/components/ui/MobileStops";
 import Cursor from "@/components/ui/Cursor";
+import PreloadResources from "./preload-resources";
 import { SITE } from "@/lib/constants";
 
 const display = DM_Serif_Display({
@@ -30,9 +31,40 @@ const mono = Geist_Mono({
   display: "swap",
 });
 
+const TITLE = `${SITE.name} — ${SITE.role}`;
+
 export const metadata: Metadata = {
-  title: `${SITE.name} — ${SITE.role}`,
+  /**
+   * Deployed under the GitHub Pages project subpath — metadataBase includes
+   * /portfolio-3d/ so every relative URL field below composes against it
+   * (supported per the shipped generate-metadata doc: "metadataBase can
+   * contain a subdomain ... or base path").
+   */
+  metadataBase: new URL("https://littlekirkycode.github.io/portfolio-3d/"),
+  title: TITLE,
   description: SITE.tagline,
+  alternates: { canonical: "./" },
+  openGraph: {
+    title: TITLE,
+    description: SITE.tagline,
+    url: "./",
+    siteName: SITE.name,
+    type: "website",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: `${SITE.name} — 3D spaceship-corridor portfolio. Closed airlock with the KIRKHAM·01 stencil and hero name card.`,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: SITE.tagline,
+    images: ["/og.png"],
+  },
 };
 
 export const viewport: Viewport = {
@@ -53,6 +85,8 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} ${mono.variable}`}
     >
       <body className="bg-bg text-ink font-body antialiased">
+        {/* Head preload hints for the p=0-critical shell assets (SSR'd into <head>) */}
+        <PreloadResources />
         {/* Full 3D scrolling scene — fixed behind everything (desktop + mobile) */}
         <SceneCanvas />
         {children}
