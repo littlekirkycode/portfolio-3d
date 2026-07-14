@@ -6,46 +6,11 @@ import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { PROJECTS } from "@/lib/constants";
 import { screenVertex, screenFragment } from "./shaders";
-import { FEATURE_X, HALF_W, FEATURE_RECESS_DEPTH } from "./hallConfig";
+import { FEATURE_X, FEATURE_GLASS_Z, FEATURE_RECESS_DEPTH } from "./hallConfig";
+import { familyVar, hexA, roundRect, wrapText } from "./canvas2d";
 import { withBase } from "@/lib/asset";
 
 const INK = "#f4f1ea";
-
-function familyVar(v: string, fb: string): string {
-  if (typeof window === "undefined") return fb;
-  const s = getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  return s ? `${s}, ${fb}` : fb;
-}
-function hexA(hex: string, a: number): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-/** Word-wrap fillText; returns the y just below the last drawn line. */
-function wrap(ctx: CanvasRenderingContext2D, t: string, x: number, y: number, maxW: number, lh: number): number {
-  let line = "";
-  for (const word of t.split(" ")) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, x, y);
-      line = word;
-      y += lh;
-    } else line = test;
-  }
-  if (line) ctx.fillText(line, x, y);
-  return y + lh;
-}
 
 const FW = 4.8; // 16:9 feature panel (sized to fit the FOV head-on from across the hall)
 const FH = 2.7;
@@ -212,7 +177,7 @@ export default function FeatureScreen() {
       ctx.fillText(p.title, lx - 2, 372);
       ctx.fillStyle = "rgba(244,241,234,0.85)";
       ctx.font = `400 34px ${sans}`;
-      const descEnd = wrap(ctx, p.description, lx, 444, lw, 46);
+      const descEnd = wrapText(ctx, p.description, lx, 444, lw, 46);
 
       // chips: traction metrics (accent) first, then the tech stack (neutral) —
       // minus any tech already named inside a metric label (e.g. SelfGrow's
@@ -449,9 +414,9 @@ export default function FeatureScreen() {
 
   // entrance lobby: right wall, recessed into its own niche (the shell cuts the
   // wall outward by FEATURE_RECESS_DEPTH at FEATURE_X — Rig's feature look-target
-  // uses the same depth so the flat panel stays framed head-on).
+  // aims at the same shared FEATURE_GLASS_Z so the flat panel stays framed head-on).
   return (
-    <group position={[FEATURE_X, 1.72, HALF_W - 0.06 + FEATURE_RECESS_DEPTH]} rotation-y={Math.PI}>
+    <group position={[FEATURE_X, 1.72, FEATURE_GLASS_Z]} rotation-y={Math.PI}>
       {/* low-alpha emissive backwash — the fixture reads lit even edge-on from
           the hero camera (halo spills past the casing onto the niche wall) */}
       <mesh position-z={-0.05} material={backMat}>

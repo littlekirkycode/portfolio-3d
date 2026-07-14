@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type PointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
-import { motion, useMotionValue, useSpring } from "motion/react";
+import { gsap } from "@/lib/gsap";
 import { SITE } from "@/lib/constants";
 import { fxRefs } from "@/lib/scrollStore";
 import { useReducedMotion } from "@/lib/useReducedMotion";
@@ -35,23 +41,36 @@ export default function Contact() {
   const isMobile = useIsMobile();
   const magnetic = !reduced && !isMobile;
 
+  // Magnetic email button: gsap.quickTo follow tweens (was a motion spring,
+  // stiffness 220 / damping 18 ≈ near-critically damped ~0.4s settle).
   const btnRef = useRef<HTMLAnchorElement>(null);
-  const mx = useMotionValue(0);
-  const my = useMotionValue(0);
-  const x = useSpring(mx, { stiffness: 220, damping: 18, mass: 0.4 });
-  const y = useSpring(my, { stiffness: 220, damping: 18, mass: 0.4 });
+  const quick = useRef<{ x: (v: number) => void; y: (v: number) => void } | null>(null);
+  useEffect(() => {
+    if (!magnetic) return;
+    const el = btnRef.current;
+    if (!el) return;
+    quick.current = {
+      x: gsap.quickTo(el, "x", { duration: 0.4, ease: "power3" }),
+      y: gsap.quickTo(el, "y", { duration: 0.4, ease: "power3" }),
+    };
+    return () => {
+      quick.current = null;
+      gsap.killTweensOf(el);
+      gsap.set(el, { x: 0, y: 0 });
+    };
+  }, [magnetic]);
 
   const onMove = (e: PointerEvent<HTMLAnchorElement>) => {
-    if (!magnetic) return;
+    if (!magnetic || !quick.current) return;
     const r = e.currentTarget.getBoundingClientRect();
     // Pull toward cursor, capped to ~28% of the button extent.
-    mx.set(((e.clientX - r.left) / r.width - 0.5) * r.width * 0.28);
-    my.set(((e.clientY - r.top) / r.height - 0.5) * r.height * 0.5);
+    quick.current.x(((e.clientX - r.left) / r.width - 0.5) * r.width * 0.28);
+    quick.current.y(((e.clientY - r.top) / r.height - 0.5) * r.height * 0.5);
   };
 
   const onLeave = () => {
-    mx.set(0);
-    my.set(0);
+    quick.current?.x(0);
+    quick.current?.y(0);
   };
 
   /* ── DEPART sequence ─────────────────────────────────────────────────── */
@@ -62,8 +81,13 @@ export default function Contact() {
   // The flash must be portaled to <body>: this section sits inside the GSAP
   // translated track, and a transformed ancestor demotes position:fixed to
   // ancestor-relative — the overlay would mis-centre and jump with the snap.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // Hydration gate via useSyncExternalStore (server snapshot false, client
+  // true) — the canonical "is hydrated" idiom, no setState-in-effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   // Safety: never leave the warp channel hot if we unmount mid-sequence.
   useEffect(
@@ -163,13 +187,12 @@ export default function Contact() {
             The comms flavour lives IN the world now: the HAIL console centre-
             bridge fires the same mailto as the button below. */}
         <div className="flex flex-col gap-8 desktop:gap-[2.5vh]">
-          <motion.a
+          <a
             ref={btnRef}
             href={`mailto:${SITE.email}`}
             data-cursor
             onPointerMove={onMove}
             onPointerLeave={onLeave}
-            style={magnetic ? { x, y } : undefined}
             className="group relative inline-flex w-fit items-center gap-4 rounded-full border border-line bg-bg-elev/50 px-7 py-4 backdrop-blur-sm transition-colors duration-500 hover:border-accent"
           >
             <span
@@ -190,7 +213,7 @@ export default function Contact() {
             >
               &rarr;
             </span>
-          </motion.a>
+          </a>
 
           {/* DEPART — spins up the warp streak, flashes, returns to the airlock.
               No fine print: the button + the flash explain themselves. */}

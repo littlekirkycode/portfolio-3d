@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion } from "motion/react";
 import { SITE } from "@/lib/constants";
 import { scrollRefs } from "@/lib/scrollStore";
-import { useReducedMotion } from "@/lib/useReducedMotion";
+import { HERO_FADE_START } from "@/components/canvas/hallConfig";
 import ScrollCue from "@/components/ui/ScrollCue";
 import HudFrame from "@/components/ui/HudFrame";
 
@@ -14,10 +13,13 @@ import HudFrame from "@/components/ui/HudFrame";
  * status lamp) IS the hero image, so the type stays out of its way: no
  * oversized name doubling the stencil, and the whole overlay fades out over
  * the first beat of scroll (p 0.004→0.024) so the doors open in the clear.
+ *
+ * Entrance is a plain CSS animation (hero-rise / hero-fade in globals.css) —
+ * the motion/react tween it replaced was the only thing this panel needed the
+ * library for (finding 49). The reduced-motion backstop in globals.css
+ * collapses the animation to an instant settle.
  */
 export default function Hero() {
-  const reduced = useReducedMotion();
-
   // Scroll-driven fade — style writes on a ref via rAF, zero React state.
   const fadeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function Hero() {
     const tick = () => {
       const el = fadeRef.current;
       if (el) {
-        const k = Math.min(1, Math.max(0, (scrollRefs.progress - 0.004) / 0.02));
+        const k = Math.min(1, Math.max(0, (scrollRefs.progress - HERO_FADE_START) / 0.02));
         el.style.opacity = String(1 - k);
         el.style.pointerEvents = k > 0.6 ? "none" : "";
       }
@@ -46,11 +48,9 @@ export default function Hero() {
       className="relative flex min-h-svh w-full shrink-0 flex-col justify-end px-[8vw] pb-[18vh] pt-24 outline-none desktop:h-screen desktop:w-screen"
     >
       <div ref={fadeRef}>
-        <motion.div
-          initial={{ opacity: 0, y: reduced ? 0 : 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.9, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        <div
           className="w-fit max-w-md"
+          style={{ animation: "hero-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both" }}
         >
           <HudFrame className="bg-bg/55 px-6 py-5 backdrop-blur-sm">
             <h1 className="font-display text-4xl leading-none tracking-[-0.01em] text-ink md:text-5xl">
@@ -66,17 +66,15 @@ export default function Hero() {
               CREW: 1 — does everything
             </p>
           </HudFrame>
-        </motion.div>
+        </div>
 
         {/* Scroll cue */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.0, duration: 0.8 }}
+        <div
           className="absolute bottom-[7vh] left-[8vw]"
+          style={{ animation: "hero-fade 0.8s ease-out 1s both" }}
         >
           <ScrollCue label="Scroll" />
-        </motion.div>
+        </div>
       </div>
     </section>
   );

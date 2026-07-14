@@ -314,7 +314,7 @@ function SpacewalkPilot() {
     return c;
   }, [scene]);
 
-  const labelTex = useMemo(makePilotLabelTexture, []);
+  const labelTex = useMemo(() => makePilotLabelTexture(), []);
 
   useFrame(({ camera }, rawDt) => {
     const d = drift.current;

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { SECTIONS } from "@/lib/constants";
 
@@ -45,6 +44,14 @@ export const fxRefs = {
 type ScrollState = {
   /** Index into SECTIONS of the currently-centered section. */
   sectionIndex: number;
+  /** True once the camera has arrived at the bridge (progress past
+   *  hallConfig's BRIDGE_ENTER_P). The DOM contact panel's offsetLeft only
+   *  crosses the viewport centre at p ≈ 0.95 (the work spacer is ~10 screens
+   *  wide), so sectionIndex alone flips far too late for the HUD — the camera
+   *  is already parked on the bridge from ~0.86. Written ONLY by
+   *  SmoothScrollProvider, only on threshold crossings (finding 33 — this
+   *  replaced a per-consumer rAF poll of scrollRefs.progress). */
+  atBridge: boolean;
   /** Id of the bay the camera is currently focused on (null between rooms). */
   focusedRoom: string | null;
   setFocusedRoom: (id: string | null) => void;
@@ -55,54 +62,37 @@ type ScrollState = {
   /** Smoothly scroll to a section by index. Set by SmoothScrollProvider; no-op until mounted. */
   scrollToSection: (index: number) => void;
   setSectionIndex: (i: number) => void;
+  setAtBridge: (v: boolean) => void;
   setReady: (v: boolean) => void;
   setMenuOpen: (v: boolean) => void;
   toggleMenu: () => void;
   setScrollToSection: (fn: (index: number) => void) => void;
 };
 
-/** Progress past which the 3D bridge fills the frame. The DOM contact panel's
- *  offsetLeft only crosses the viewport centre at p ≈ 0.95 (the work spacer is
- *  ~10 screens wide), so the store's sectionIndex flips far too late for the
- *  HUD — the camera is already parked on the bridge from ~0.86. */
-const BRIDGE_ENTER_P = 0.86;
-
 /**
  * Display section for the HUD chrome (nav dots, chapter rail, readout strip).
  * Identical to the store's coarse sectionIndex except the FINAL section (the
- * bridge) activates when the CAMERA arrives — a scroll-progress threshold —
- * instead of waiting for the DOM panel to cross the viewport centre. Coarse
- * state only: the rAF loop calls setState exactly once per threshold crossing,
- * never per frame (see the frame-data contract above).
+ * bridge) activates when the CAMERA arrives — the store's atBridge flag —
+ * instead of waiting for the DOM panel to cross the viewport centre. Pure
+ * store selector: the threshold derivation lives at the single place progress
+ * is written (SmoothScrollProvider), not in a rAF loop per consumer.
  */
 export function useShipSection(): number {
   const sectionIndex = useScrollStore((s) => s.sectionIndex);
-  const [atBridge, setAtBridge] = useState(false);
-  useEffect(() => {
-    let raf = 0;
-    let last: boolean | null = null;
-    const tick = () => {
-      const now = scrollRefs.progress > BRIDGE_ENTER_P;
-      if (now !== last) {
-        last = now;
-        setAtBridge(now);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  const atBridge = useScrollStore((s) => s.atBridge);
   return atBridge ? SECTIONS.length - 1 : sectionIndex;
 }
 
 export const useScrollStore = create<ScrollState>((set) => ({
   sectionIndex: 0,
+  atBridge: false,
   focusedRoom: null,
   setFocusedRoom: (id) => set({ focusedRoom: id }),
   ready: false,
   menuOpen: false,
   scrollToSection: () => {},
   setSectionIndex: (i) => set({ sectionIndex: i }),
+  setAtBridge: (v) => set({ atBridge: v }),
   setReady: (v) => set({ ready: v }),
   setMenuOpen: (v) => set({ menuOpen: v }),
   toggleMenu: () => set((s) => ({ menuOpen: !s.menuOpen })),

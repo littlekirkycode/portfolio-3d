@@ -28,6 +28,13 @@ import {
   focusAt,
   galleryFocusAt,
   featureFocusAt,
+  BRIDGE_ENTER_P,
+  HERO_FADE_START,
+  HALF_W,
+  GLASS_INSET,
+  GLASS_Z,
+  FEATURE_GLASS_Z,
+  FEATURE_RECESS_DEPTH,
 } from "./hallConfig";
 
 const EPS = 1e-9;
@@ -118,6 +125,37 @@ describe("focus bands are mutually non-overlapping", () => {
         expect(featureFocusAt(p), `slot ${slot} @p=${p}`).toBe(0);
       }
     });
+  });
+});
+
+describe("shared progress/geometry constants (finding 32)", () => {
+  it("BRIDGE_ENTER_P sits past every dwell slot and before the end of travel", () => {
+    // The last dwell-slot centre is the second-to-last STOP_PROGRESSES entry
+    // (the final entry is the bridge itself at 1). The camera must only be
+    // "at the bridge" after it has left the last exhibit.
+    const lastSlotCentre = STOP_PROGRESSES[STOP_PROGRESSES.length - 2];
+    expect(BRIDGE_ENTER_P).toBeGreaterThan(lastSlotCentre);
+    expect(BRIDGE_ENTER_P).toBeLessThan(1);
+    // No room/gallery/feature focus band may still be active at the threshold.
+    expect(focusAt(BRIDGE_ENTER_P).room).toBeNull();
+    expect(galleryFocusAt(BRIDGE_ENTER_P)).toBe(0);
+    expect(featureFocusAt(BRIDGE_ENTER_P)).toBe(0);
+  });
+
+  it("HERO_FADE_START is a first-beat-of-scroll threshold", () => {
+    expect(HERO_FADE_START).toBeGreaterThan(0);
+    // well before the first hold (the lobby showreel stop)
+    expect(HERO_FADE_START).toBeLessThan(STOP_PROGRESSES[1]);
+  });
+
+  it("glass planes sit just inside the corridor walls and agree with the recess", () => {
+    expect(GLASS_INSET).toBeGreaterThan(0);
+    expect(GLASS_Z).toBe(HALF_W - GLASS_INSET);
+    expect(GLASS_Z).toBeGreaterThan(0);
+    expect(GLASS_Z).toBeLessThan(HALF_W);
+    // The showreel glass = wall glass pushed out by exactly the wall recess
+    // (Rig's look target and FeatureScreen's plane both import this value).
+    expect(FEATURE_GLASS_Z).toBeCloseTo(GLASS_Z + FEATURE_RECESS_DEPTH, 12);
   });
 });
 

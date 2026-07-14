@@ -7,6 +7,7 @@ import { scrollRefs } from "@/lib/scrollStore";
 import { clamp01 } from "@/lib/math";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { START_X, HALF_W, WALL_H } from "./hallConfig";
+import { familyVar } from "./canvas2d";
 
 /**
  * Boarding airlock — a sliding double door filling the corridor cross-section
@@ -33,12 +34,6 @@ const _green = new THREE.Color("#37ff8a");
 
 const easeCubic = (t: number) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-
-function familyVar(varName: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return v ? `${v}, ${fallback}` : fallback;
-}
 
 /** One door half's face, drawn to a CanvasTexture. `side` −1 = viewer-left
  *  (seam on the canvas's right edge), +1 = viewer-right (seam on the left).

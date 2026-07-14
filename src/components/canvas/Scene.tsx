@@ -79,14 +79,19 @@ export default function Scene() {
   // back to full sharpness within a few seconds, so the "canvas panels
   // visibly soft at 1.5" QA note still lands where it matters — steady state.
   // Desktop keeps its cap at 2 from the first frame. (matchMedia, not the
-  // isMobile state, so the mobile boot never renders a dpr-2 frame while the
-  // useIsMobile effect is still settling.)
+  // isMobile state, so the mobile boot never renders a dpr-2 frame while
+  // useIsMobile is still settling.) A breakpoint-crossing resize re-derives
+  // the cap — which also clears any PerformanceMonitor-declined value for the
+  // new device class.
   const [dprMax, setDprMax] = useState(() =>
     window.matchMedia(MOBILE_MEDIA_QUERY).matches ? 1.5 : 2,
   );
   useEffect(() => {
-    setDprMax(window.matchMedia(MOBILE_MEDIA_QUERY).matches ? 1.5 : 2);
-  }, [isMobile]);
+    const mq = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const onChange = () => setDprMax(mq.matches ? 1.5 : 2);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const [visible, setVisible] = useState(true);
   useEffect(() => {

@@ -18,6 +18,7 @@ import {
   GALLERY_X,
   GALLERY_SPAN,
   GALLERY_SIDE,
+  BRIDGE_ENTER_P,
 } from "./hallConfig";
 import { starVertex, starFragment, makeStarUniforms, updateStarUniforms } from "./Windows";
 
@@ -458,7 +459,7 @@ function CeilingBars() {
   useFrame(() => {
     const m = matRef.current;
     if (!m) return;
-    const t = Math.min(1, Math.max(0, (scrollRefs.progress - 0.86) / 0.09));
+    const t = Math.min(1, Math.max(0, (scrollRefs.progress - BRIDGE_ENTER_P) / 0.09));
     m.color.lerpColors(BAR_LIT, BAR_DIMMED, t * t * (3 - 2 * t));
   });
   return (

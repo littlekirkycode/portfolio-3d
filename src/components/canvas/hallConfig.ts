@@ -124,6 +124,16 @@ const FEATURE_CAM_X = FEATURE_X;
  *  still frames head-on (flat-panel rule — see Rig). */
 export const FEATURE_RECESS_DEPTH = 1.0;
 
+/** Inset of the flat "glass" display planes off the inner wall face (|z| =
+ *  HALF_W). Rig's flat-panel look targets and FeatureScreen's panel MUST agree
+ *  on this depth or the head-on framing slides off the panel — shared here so
+ *  the coupling is a constant, not a comment (finding 32). */
+export const GLASS_INSET = 0.06;
+/** Absolute |z| of a flat glass plane on the inner wall face. */
+export const GLASS_Z = HALF_W - GLASS_INSET;
+/** Absolute z of the showreel's recessed glass plane (+z wall at FEATURE_X). */
+export const FEATURE_GLASS_Z = GLASS_Z + FEATURE_RECESS_DEPTH;
+
 /* ── observation gallery (dwell slot 5) ─────────────────────────────────── */
 
 /** Gallery glazing lives on the +z wall — opposite xuabelle's bay (ROOMS[4]). */
@@ -205,6 +215,16 @@ for (let i = 0; i < N_SLOTS; i++) {
   KEYS.push({ p: s + SLOT * 0.7, x }); // leave — corridor travel between slots
 }
 KEYS.push({ p: 1, x: END_X });
+
+/** Progress past which the 3D bridge fills the frame. The camera parks on the
+ *  bridge from here (well past the last dwell slot); the HUD's ship-section,
+ *  Corridor's approach-dim band and the Drone's bridge dock all key off this
+ *  one threshold (finding 32 — it used to be re-hardcoded per file). */
+export const BRIDGE_ENTER_P = 0.86;
+
+/** Progress where the hero overlay starts its fade (and the airlock hiss
+ *  fires) — the first beat of scroll, shared by Hero + useShipAudio. */
+export const HERO_FADE_START = 0.004;
 
 /** Dwell-stop progress values for the mobile hop chevrons: airlock, lobby
  *  showreel, every dwell slot centre (9 rooms + the gallery), bridge. Derived

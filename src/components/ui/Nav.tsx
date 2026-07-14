@@ -1,6 +1,7 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef } from "react";
+import { gsap } from "@/lib/gsap";
 import { SECTIONS, SITE } from "@/lib/constants";
 import { useScrollStore, useShipSection } from "@/lib/scrollStore";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -19,11 +20,44 @@ export default function Nav() {
   // the camera reaches the bridge, not when the wide DOM panel finally crosses.
   const sectionIndex = useShipSection();
   const menuOpen = useScrollStore((s) => s.menuOpen);
+  const showMenu = isMobile && menuOpen;
 
   const go = (index: number) => {
     useScrollStore.getState().scrollToSection(index);
     useScrollStore.getState().setMenuOpen(false);
   };
+
+  /* Active-dot glow (was motion's layoutId shared-layout spring — finding 49):
+     ONE absolutely-positioned glow in the nav, gsap-tweened between the
+     measured centres of the per-item dot anchors on section change. First
+     placement (and resizes) snap instantly; changes get the springy hop. */
+  const navRef = useRef<HTMLElement>(null);
+  const glowRef = useRef<HTMLSpanElement>(null);
+  const glowPlaced = useRef(false);
+  useEffect(() => {
+    const place = (animate: boolean) => {
+      const nav = navRef.current;
+      const glow = glowRef.current;
+      const anchor = nav?.querySelector<HTMLElement>(`[data-nav-dot="${sectionIndex}"]`);
+      if (!nav || !glow || !anchor) return;
+      const nr = nav.getBoundingClientRect();
+      const ar = anchor.getBoundingClientRect();
+      const x = ar.left + ar.width / 2 - nr.left;
+      const y = ar.top + ar.height / 2 - nr.top;
+      if (animate) {
+        gsap.to(glow, { x, y, duration: 0.45, ease: "back.out(1.6)", overwrite: "auto" });
+      } else {
+        // autoAlpha reveals the glow only once it has real coordinates — it
+        // starts `invisible` so SSR/first paint never shows it un-placed.
+        gsap.set(glow, { x, y, autoAlpha: 1 });
+      }
+    };
+    place(glowPlaced.current);
+    glowPlaced.current = true;
+    const onResize = () => place(false);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [sectionIndex]);
 
   return (
     <>
@@ -50,7 +84,15 @@ export default function Nav() {
             The visible ship name IS the accessible name (WCAG 2.5.3 label-in-
             name — voice control users say what they see), with an sr-only
             descriptive suffix: "MANIFEST — Intro". */}
-        <nav className="pointer-events-auto hidden items-center gap-8 desktop:flex">
+        <nav ref={navRef} className="pointer-events-auto relative hidden items-center gap-8 desktop:flex">
+            {/* travelling glow behind the active item's dot — centred via
+                negative margins (NOT a translate class: gsap owns x/y) */}
+            <span
+              ref={glowRef}
+              aria-hidden
+              className="invisible absolute left-0 top-0 h-3.5 w-3.5 rounded-full bg-accent/40 blur-[3px]"
+              style={{ marginLeft: -7, marginTop: -7 }}
+            />
             {SECTIONS.map((section, i) => {
               const active = i === sectionIndex;
               return (
@@ -62,19 +104,12 @@ export default function Nav() {
                   onClick={() => go(i)}
                   className="group relative flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em]"
                 >
-                  <span className="relative flex h-1.5 w-1.5 items-center justify-center">
+                  <span data-nav-dot={i} className="relative flex h-1.5 w-1.5 items-center justify-center">
                     <span
                       className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${
                         active ? "scale-100 bg-accent" : "scale-0 bg-ink"
                       }`}
                     />
-                    {active && (
-                      <motion.span
-                        layoutId="nav-dot-glow"
-                        className="absolute h-3.5 w-3.5 rounded-full bg-accent/40 blur-[3px]"
-                        transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                      />
-                    )}
                   </span>
                   <span
                     className={`transition-colors duration-300 ${
@@ -113,71 +148,69 @@ export default function Nav() {
           </button>
       </header>
 
-      {/* Mobile full-screen overlay menu */}
-      <AnimatePresence>
-        {isMobile && menuOpen && (
-          <motion.div
-            key="menu"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed inset-0 z-[45] flex flex-col justify-center gap-2 bg-bg/92 px-[8vw] backdrop-blur-md"
-          >
-            <nav className="flex flex-col gap-1">
-              {SECTIONS.map((section, i) => {
-                const active = i === sectionIndex;
-                return (
-                  <motion.button
-                    key={section.id}
-                    type="button"
-                    data-cursor
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => go(i)}
-                    initial={{ opacity: 0, y: 28 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 12 }}
-                    transition={{
-                      delay: 0.08 + i * 0.07,
-                      duration: 0.5,
-                      ease: [0.22, 1, 0.36, 1],
-                    }}
-                    className="flex items-baseline gap-4 py-1 text-left"
-                  >
-                    <span className="font-mono text-xs text-ink-dim">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <span
-                      className={`font-display text-5xl leading-none transition-colors ${
-                        active ? "text-accent" : "text-ink"
-                      }`}
-                    >
-                      {shipLabel(section.id, section.label)}
-                    </span>
-                    <span className="sr-only"> — {section.label}</span>
-                  </motion.button>
-                );
-              })}
-            </nav>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.4, duration: 0.5 }}
-              className="mt-12 flex flex-col gap-1 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-dim"
-            >
-              <a
+      {/* Mobile full-screen overlay menu. Always mounted, CSS-driven (was
+          motion's AnimatePresence — finding 49): visibility transitions
+          discretely at the END of the fade-out, so the exit animation plays
+          and then the hidden overlay drops out of the a11y tree/tab order.
+          Item rise/stagger uses per-item transition-delay on ENTER only. */}
+      <div
+        aria-hidden={!showMenu}
+        className={`fixed inset-0 z-[45] flex flex-col justify-center gap-2 bg-bg/92 px-[8vw] backdrop-blur-md transition-[opacity,visibility] duration-400 ease-out ${
+          showMenu ? "visible opacity-100" : "invisible opacity-0"
+        }`}
+      >
+        <nav className="flex flex-col gap-1">
+          {SECTIONS.map((section, i) => {
+            const active = i === sectionIndex;
+            return (
+              <button
+                key={section.id}
+                type="button"
                 data-cursor
-                href={`mailto:${SITE.email}`}
-                className="pointer-events-auto w-fit transition-colors hover:text-ink"
+                aria-current={active ? "true" : undefined}
+                onClick={() => go(i)}
+                tabIndex={showMenu ? 0 : -1}
+                style={{
+                  transitionDelay: showMenu ? `${0.08 + i * 0.07}s` : "0s",
+                  transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+                }}
+                className={`flex items-baseline gap-4 py-1 text-left transition-[opacity,transform] duration-500 ${
+                  showMenu ? "translate-y-0 opacity-100" : "translate-y-7 opacity-0"
+                }`}
               >
-                {SITE.email}
-              </a>
-              <span>{SITE.location}</span>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                <span className="font-mono text-xs text-ink-dim">
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span
+                  className={`font-display text-5xl leading-none transition-colors ${
+                    active ? "text-accent" : "text-ink"
+                  }`}
+                >
+                  {shipLabel(section.id, section.label)}
+                </span>
+                <span className="sr-only"> — {section.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div
+          style={{ transitionDelay: showMenu ? "0.4s" : "0s" }}
+          className={`mt-12 flex flex-col gap-1 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-dim transition-opacity duration-500 ${
+            showMenu ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <a
+            data-cursor
+            href={`mailto:${SITE.email}`}
+            tabIndex={showMenu ? 0 : -1}
+            className="pointer-events-auto w-fit transition-colors hover:text-ink"
+          >
+            {SITE.email}
+          </a>
+          <span>{SITE.location}</span>
+        </div>
+      </div>
     </>
   );
 }

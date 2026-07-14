@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { BREAKPOINT_MOBILE } from "./constants";
 
 /**
@@ -15,17 +15,27 @@ import { BREAKPOINT_MOBILE } from "./constants";
 export const DESKTOP_MEDIA_QUERY = `(min-width: ${BREAKPOINT_MOBILE}px) and (pointer: fine)`;
 export const MOBILE_MEDIA_QUERY = `(max-width: ${BREAKPOINT_MOBILE - 1}px), (pointer: coarse)`;
 
-/** True on small / coarse-pointer devices (drives the vertical-stack fallback). */
+function subscribe(onChange: () => void): () => void {
+  const mq = window.matchMedia(MOBILE_MEDIA_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+const getSnapshot = () => window.matchMedia(MOBILE_MEDIA_QUERY).matches;
+// Static export prerender has no viewport — render the desktop variant, the
+// same markup a hydrating client shows until React reconciles the snapshot.
+const getServerSnapshot = () => false;
+
+/**
+ * True on small / coarse-pointer devices (drives the vertical-stack fallback).
+ *
+ * useSyncExternalStore instead of the useState+useEffect idiom (finding 20):
+ * components that mount OUTSIDE hydration — the whole ssr:false canvas tree —
+ * now read the real matchMedia value on their FIRST render, so a phone never
+ * commits one desktop-variant frame (Rig/Effects/FovFit) before the old
+ * effect landed. SSR'd DOM components still hydrate against the server
+ * snapshot (false) and reconcile right after — hydration-safe by design.
+ */
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia(MOBILE_MEDIA_QUERY);
-    const onChange = () => setIsMobile(mq.matches);
-    onChange();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-
-  return isMobile;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

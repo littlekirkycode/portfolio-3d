@@ -17,7 +17,9 @@ import {
   GALLERY_X,
   GALLERY_SIDE,
   FEATURE_X,
+  BRIDGE_ENTER_P,
 } from "./hallConfig";
+import { familyVar } from "./canvas2d";
 import { withBase } from "@/lib/asset";
 
 /**
@@ -77,12 +79,6 @@ const POKE_QUIPS = [
   "ok. that's mildly annoying.",
   "i know where you sleep. it's the crew bunk.",
 ];
-
-function familyVar(varName: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return v ? `${v}, ${fallback}` : fallback;
-}
 
 // reused temps (never allocated per-frame)
 const _look = new THREE.Object3D();
@@ -287,7 +283,7 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     const ff = featureFocusAt(p);
     // bridge dock: past the last slot, ease aside so the camera never runs
     // into the escort at the end of the rail (QA: "you scroll into him")
-    const bd = reduced ? 0 : clamp01((p - 0.86) / 0.05);
+    const bd = reduced ? 0 : clamp01((p - BRIDGE_ENTER_P) / 0.05);
     // Parking spots are tuned for the desktop frame. On mobile the camera
     // STEPS INTO the focused bay (Rig's portrait step-in) — a parked escort
     // there photobombs the close-up — so the escort just keeps leading.
@@ -437,7 +433,8 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           key = `poke:${pokeIdx.current}:${Math.floor(pokeAt.current * 10)}`;
           text = POKE_QUIPS[pokeIdx.current % POKE_QUIPS.length];
           accent = "#ffd27f";
-        } else if (p > 0.865) {
+        } else if (p > BRIDGE_ENTER_P + 0.005) {
+          // (small offset past arrival so the dock quip lands after the turn)
           key = "bridge";
           text = "bridge ahead. don't touch the big lever.";
         } else if (parks && gf > 0.6) {

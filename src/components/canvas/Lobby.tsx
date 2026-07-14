@@ -110,7 +110,7 @@ function makeDoorTexture(): THREE.CanvasTexture {
  * two emissive strips + threshold bar are plain emitter quads.
  */
 export default function Lobby() {
-  const doorTex = useMemo(makeDoorTexture, []);
+  const doorTex = useMemo(() => makeDoorTexture(), []);
 
   return (
     <group>

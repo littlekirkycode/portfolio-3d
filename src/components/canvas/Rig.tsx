@@ -6,20 +6,18 @@ import type { PerspectiveCamera } from "three";
 import { scrollRefs, useScrollStore } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
 import {
-  TRAVEL,
   EYE_Y,
-  HALF_W,
   cameraXAt,
   focusAt,
   featureFocusAt,
   galleryFocusAt,
   FEATURE_X,
-  FEATURE_RECESS_DEPTH,
   GALLERY_X,
   GALLERY_SIDE,
+  HALF_W,
+  GLASS_Z,
+  FEATURE_GLASS_Z,
 } from "./hallConfig";
-
-export { TRAVEL };
 
 type RigProps = { frozen?: boolean; mobile?: boolean };
 
@@ -131,16 +129,16 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
     // gallery owns its own slot).
     if (gf > 0) {
       tx = camera.position.x + 6 + gf * (GALLERY_X - (camera.position.x + 6));
-      tz = camera.position.z + gf * (GALLERY_SIDE * (HALF_W - 0.06) - camera.position.z);
+      tz = camera.position.z + gf * (GALLERY_SIDE * GLASS_Z - camera.position.z);
     }
     // Entrance showreel: turn to face the feature screen (on the +Z wall) during
     // its lobby band (no overlap with room bands).
     if (ff > 0) {
       // Flat panel — same rule: aim EXACTLY at the glass plane. The showreel is
-      // recessed OUTWARD by FEATURE_RECESS_DEPTH (glass at
-      // HALF_W - 0.06 + FEATURE_RECESS_DEPTH, matching FeatureScreen's plane).
+      // recessed OUTWARD (FEATURE_GLASS_Z is shared with FeatureScreen's plane,
+      // so the coupling can't drift — finding 32).
       tx = camera.position.x + 6 + ff * (FEATURE_X - (camera.position.x + 6));
-      tz = camera.position.z + ff * (HALF_W - 0.06 + FEATURE_RECESS_DEPTH - camera.position.z);
+      tz = camera.position.z + ff * (FEATURE_GLASS_Z - camera.position.z);
     }
     if (frozen) {
       // un-damped look: the head-turn is a pure function of scroll position

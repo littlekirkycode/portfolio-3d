@@ -9,8 +9,8 @@ import {
   type ElementType,
   type ReactNode,
 } from "react";
-import { useInView } from "motion/react";
 import SplitType from "split-type";
+import { useInView } from "@/lib/useInView";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 
 type SplitKind = "chars" | "words" | "lines";
@@ -117,6 +117,12 @@ export default function SplitText({
 
     // Prep: make each unit a clippable inline-block and offset it.
     for (const u of units) {
+      // False positive: `units` state holds raw DOM spans that split-type
+      // created imperatively inside a dangerouslySetInnerHTML host — they are
+      // not React-rendered/React-owned, and imperative style writes are the
+      // whole mechanism of this reveal (same class of pattern as the
+      // canvas/ THREE-object carve-out in eslint.config.mjs).
+      // eslint-disable-next-line react-hooks/immutability
       u.style.display = "inline-block";
       u.style.willChange = "transform, opacity";
       if (!inView) {
@@ -161,6 +167,11 @@ export default function SplitText({
   // its inner DOM as OPAQUE — split-type then rewrites it into spans without React
   // ever trying to reconcile/removeChild those nodes (which crashed on re-render).
   // The aria-label keeps the full text readable to assistive tech.
+  //
+  // False positive: this passes the ref OBJECT to a dynamic element type (the
+  // standard polymorphic-component pattern); `as` is always a host tag here,
+  // so React attaches the ref — nothing reads .current during render.
+  // eslint-disable-next-line react-hooks/refs
   return createElement(as, {
     ref,
     className,

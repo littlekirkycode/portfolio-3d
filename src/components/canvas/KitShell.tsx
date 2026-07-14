@@ -181,7 +181,7 @@ function InstancedTiles({
  *  drawn in three instanced meshes (ground walls, darkened upper walls,
  *  floor/ceiling) plus two flat atrium closure bands. */
 export default function KitShell() {
-  const { walls, wallsUpper, floors } = useMemo(buildShell, []);
+  const { walls, wallsUpper, floors } = useMemo(() => buildShell(), []);
   return (
     <group>
       <InstancedTiles piece="kit-wall" instances={walls} />

@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, useMotionValue, useSpring } from "motion/react";
+import { gsap } from "@/lib/gsap";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 
 /**
  * Cinematic custom cursor: a tight dot that tracks the pointer 1:1 and a
- * trailing ring lagged behind via a soft spring. Renders only on fine
+ * trailing ring lagged behind via a soft tween. Renders only on fine
  * pointers; on mount it tags <html> so globals.css hides the native cursor.
  *
  * Fully disabled (native cursor kept — has-custom-cursor never set) when the
@@ -14,9 +14,11 @@ import { useReducedMotion } from "@/lib/useReducedMotion";
  * secondary motion vestibular users opt out of) or under forced-colors mode,
  * where mix-blend-difference is unreliable.
  *
- * State changes (hover / press) are coarse, so React state is fine here —
- * the per-frame tracking is driven entirely by motion values + a spring,
- * never by setState.
+ * Per-frame tracking is gsap (quickSetter for the dot, quickTo for the ring's
+ * lagged follow — was motion useSpring, finding 49); gsap owns the wrappers'
+ * x/y translation while the hover/press scale lives on nested children as a
+ * plain CSS transition, so the two transforms never fight. State changes
+ * (hover / press) are coarse, so React state is fine here.
  */
 export default function Cursor() {
   const reduced = useReducedMotion();
@@ -24,13 +26,8 @@ export default function Cursor() {
   const [hovering, setHovering] = useState(false);
   const [pressed, setPressed] = useState(false);
 
-  // Raw pointer position (instant) — dot follows this directly.
-  const x = useMotionValue(-100);
-  const y = useMotionValue(-100);
-
-  // Ring lags behind with a springy follow.
-  const ringX = useSpring(x, { stiffness: 350, damping: 30, mass: 0.4 });
-  const ringY = useSpring(y, { stiffness: 350, damping: 30, mass: 0.4 });
+  const dotRef = useRef<HTMLDivElement>(null);
+  const ringRef = useRef<HTMLDivElement>(null);
 
   // Track how many cursor-interactive elements we're currently over, so
   // nested pointerover/out events can't prematurely drop the hover state.
@@ -67,8 +64,19 @@ export default function Cursor() {
   const active = enabled && !reduced;
   useEffect(() => {
     if (!active || typeof window === "undefined") return;
+    const dot = dotRef.current;
+    const ring = ringRef.current;
+    if (!dot || !ring) return;
     const root = document.documentElement;
     root.classList.add("has-custom-cursor");
+
+    // Dot snaps 1:1; the ring chases with a short eased tween per move —
+    // reads as the old overdamped spring (stiffness 350 / damping 30).
+    gsap.set([dot, ring], { x: -100, y: -100 });
+    const dotX = gsap.quickSetter(dot, "x", "px") as (v: number) => void;
+    const dotY = gsap.quickSetter(dot, "y", "px") as (v: number) => void;
+    const ringX = gsap.quickTo(ring, "x", { duration: 0.35, ease: "power3" });
+    const ringY = gsap.quickTo(ring, "y", { duration: 0.35, ease: "power3" });
 
     const isInteractive = (el: Element | null): boolean =>
       !!el?.closest(
@@ -76,8 +84,10 @@ export default function Cursor() {
       );
 
     const onMove = (e: PointerEvent) => {
-      x.set(e.clientX);
-      y.set(e.clientY);
+      dotX(e.clientX);
+      dotY(e.clientY);
+      ringX(e.clientX);
+      ringY(e.clientY);
     };
 
     const onOver = (e: PointerEvent) => {
@@ -100,8 +110,10 @@ export default function Cursor() {
     // Park the cursor offscreen when the pointer truly leaves the window.
     // document's pointerleave is unreliable, so use pointerout-to-null + blur.
     const park = () => {
-      x.set(-100);
-      y.set(-100);
+      dotX(-100);
+      dotY(-100);
+      ringX(-100);
+      ringY(-100);
     };
     const onWindowOut = (e: PointerEvent) => {
       if (e.relatedTarget === null) park();
@@ -117,6 +129,7 @@ export default function Cursor() {
 
     return () => {
       root.classList.remove("has-custom-cursor");
+      gsap.killTweensOf([dot, ring]);
       window.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerover", onOver, true);
       document.removeEventListener("pointerout", onOut, true);
@@ -125,48 +138,45 @@ export default function Cursor() {
       window.removeEventListener("pointerout", onWindowOut);
       window.removeEventListener("blur", park);
     };
-  }, [active, x, y]);
+  }, [active]);
 
   if (!active) return null;
+
+  const ringScale = hovering || worldHover ? 1.9 : pressed ? 0.7 : 1;
+  const dotScale = hovering || worldHover ? 0.4 : pressed ? 1.6 : 1;
 
   return (
     <div
       aria-hidden
       className="pointer-events-none fixed inset-0 z-[60] mix-blend-difference"
     >
-      {/* Trailing ring */}
-      <motion.div
-        className="absolute top-0 left-0 rounded-full border border-ink"
-        style={{
-          x: ringX,
-          y: ringY,
-          width: 34,
-          height: 34,
-          marginLeft: -17,
-          marginTop: -17,
-        }}
-        animate={{
-          scale: hovering || worldHover ? 1.9 : pressed ? 0.7 : 1,
-          opacity: hovering || worldHover ? 1 : 0.6,
-        }}
-        transition={{ type: "spring", stiffness: 400, damping: 28 }}
-      />
+      {/* Trailing ring (wrapper: gsap x/y; child: CSS-transitioned scale) */}
+      <div ref={ringRef} className="absolute top-0 left-0">
+        <div
+          className="rounded-full border border-ink transition-[transform,opacity] duration-300 ease-out"
+          style={{
+            width: 34,
+            height: 34,
+            marginLeft: -17,
+            marginTop: -17,
+            transform: `scale(${ringScale})`,
+            opacity: hovering || worldHover ? 1 : 0.6,
+          }}
+        />
+      </div>
       {/* Core dot */}
-      <motion.div
-        className="absolute top-0 left-0 rounded-full bg-ink"
-        style={{
-          x,
-          y,
-          width: 6,
-          height: 6,
-          marginLeft: -3,
-          marginTop: -3,
-        }}
-        animate={{
-          scale: hovering || worldHover ? 0.4 : pressed ? 1.6 : 1,
-        }}
-        transition={{ type: "spring", stiffness: 600, damping: 30 }}
-      />
+      <div ref={dotRef} className="absolute top-0 left-0">
+        <div
+          className="rounded-full bg-ink transition-transform duration-200 ease-out"
+          style={{
+            width: 6,
+            height: 6,
+            marginLeft: -3,
+            marginTop: -3,
+            transform: `scale(${dotScale})`,
+          }}
+        />
+      </div>
     </div>
   );
 }

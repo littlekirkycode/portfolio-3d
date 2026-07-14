@@ -5,6 +5,7 @@ import Lenis from "lenis";
 import { gsap, ScrollTrigger, registerGsap } from "@/lib/gsap";
 import { scrollRefs, pointerRefs, useScrollStore } from "@/lib/scrollStore";
 import { DESKTOP_MEDIA_QUERY, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
+import { BRIDGE_ENTER_P } from "@/components/canvas/hallConfig";
 
 /**
  * Fully-horizontal scroll engine.
@@ -45,8 +46,22 @@ export default function SmoothScrollProvider({
   useEffect(() => {
     registerGsap();
 
-    const { setReady, setSectionIndex, setScrollToSection } =
+    const { setReady, setSectionIndex, setScrollToSection, setAtBridge } =
       useScrollStore.getState();
+
+    // Single writer for corridor progress (finding 33): every site that used
+    // to assign scrollRefs.progress goes through here, so the coarse atBridge
+    // flag is derived exactly where progress is produced — the store setter
+    // fires only on threshold crossings, never per frame (frame-data contract).
+    let atBridge = false;
+    const publishProgress = (p: number) => {
+      scrollRefs.progress = p;
+      const now = p > BRIDGE_ENTER_P;
+      if (now !== atBridge) {
+        atBridge = now;
+        setAtBridge(now);
+      }
+    };
     // gestureOrientation "both" lets Lenis natively fold horizontal trackpad
     // (deltaX) gestures into its single scroll, which we map to the X translate.
     const lenis = new Lenis({
@@ -82,8 +97,9 @@ export default function SmoothScrollProvider({
       scrollRefs.velocity = e.velocity ?? 0;
       if (mobileMode) {
         const scroll = e.scroll ?? lenis.scroll ?? 0;
-        scrollRefs.progress =
-          mobileLimit > 0 ? Math.min(1, Math.max(0, scroll / mobileLimit)) : 0;
+        publishProgress(
+          mobileLimit > 0 ? Math.min(1, Math.max(0, scroll / mobileLimit)) : 0,
+        );
         if (e.direction === 1 || e.direction === -1) scrollRefs.direction = e.direction;
         // Section = last panel whose top has crossed the viewport centre.
         const center = scroll + window.innerHeight / 2;
@@ -131,7 +147,7 @@ export default function SmoothScrollProvider({
             sectionOffsets = panels.map((p) => p.offsetLeft);
           },
           onUpdate: (self) => {
-            scrollRefs.progress = self.progress;
+            publishProgress(self.progress);
             scrollRefs.direction = self.direction as 1 | -1;
             const center = self.progress * distance() + window.innerWidth / 2;
             let idx = 0;
@@ -208,8 +224,7 @@ export default function SmoothScrollProvider({
       };
       measureLimit();
       // seed once in case the user hasn't scrolled yet
-      scrollRefs.progress =
-        mobileLimit > 0 ? Math.min(1, lenis.scroll / mobileLimit) : 0;
+      publishProgress(mobileLimit > 0 ? Math.min(1, lenis.scroll / mobileLimit) : 0);
       const measure = () => {
         mobileSectionTops = gsap.utils
           .toArray<HTMLElement>("[data-section]")

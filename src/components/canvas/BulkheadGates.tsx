@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { damp } from "@/lib/math";
 import { GATES, HALF_W, WALL_H } from "./hallConfig";
+import { familyVar } from "./canvas2d";
 
 /* ── deck bulkhead gates — protruding collars with sliding pocket doors.
  *    Each gate marks a deck transition mid-corridor: chevron + 'DECK 0x'
@@ -21,12 +22,6 @@ const DOOR_W = OPEN_HALF + 0.35;
 const DOOR_CLOSED = DOOR_W / 2 - 0.12; // slabs overlap slightly at centre
 const DOOR_OPEN = OPEN_HALF + DOOR_W / 2 + 0.3; // fully pocketed past the jambs
 const TRIGGER = 8; // |cameraX - gate.x| that opens the doors
-
-function familyVar(varName: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return v ? `${v}, ${fallback}` : fallback;
-}
 
 /** Shared chevron decal — white arrows on transparent, tinted per gate via
  *  material color. One small CanvasTexture for all gates. */

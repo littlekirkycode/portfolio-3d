@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { scrollRefs, useScrollStore } from "@/lib/scrollStore";
+import { HERO_FADE_START } from "@/components/canvas/hallConfig";
 
 /**
  * Fully-synthesized ship audio (no files):
@@ -190,7 +191,7 @@ export function useShipAudio(): { on: boolean; toggle: () => void } {
     let raf = 0;
     const tick = () => {
       if (hissedRef.current) return;
-      if (scrollRefs.progress > 0.004) {
+      if (scrollRefs.progress > HERO_FADE_START) {
         hissedRef.current = true;
         hiss();
         return;
