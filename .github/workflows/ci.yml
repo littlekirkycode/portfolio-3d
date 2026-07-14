@@ -1,10 +1,11 @@
 name: CI
 
+# pull_request only: a push trigger would double-run the pipeline on PR
+# branches (different concurrency groups) and churn on backup/* pushes.
+# Master itself is gated inline in deploy.yml.
 on:
   pull_request:
-  push:
-    branches-ignore:
-      - master
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -31,7 +32,9 @@ jobs:
         # build — see node_modules/next/dist/docs/01-app/03-api-reference/06-cli/next.md
         # ("next typegen && tsc --noEmit").
         run: npx next typegen && npx tsc --noEmit
-      - name: Audit (fail on high/critical)
-        run: npm audit --audit-level=high
+      - name: Audit (fail on high/critical in production deps)
+        # --omit=dev: for a static export, only shipped (production) deps carry
+        # runtime exposure; dev-tool advisories shouldn't block merges.
+        run: npm audit --omit=dev --audit-level=high
       - run: npm test
       - run: npm run build

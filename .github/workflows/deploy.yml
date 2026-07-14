@@ -40,6 +40,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
       - run: npm ci
+      # Quality gates run on the deployed code path too — ci.yml only covers
+      # PRs, and a direct push to master would otherwise skip every check.
+      - run: npm run lint
+      - name: Typecheck
+        run: npx next typegen && npx tsc --noEmit
+      - name: Audit (fail on high/critical in production deps)
+        run: npm audit --omit=dev --audit-level=high
+      - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
