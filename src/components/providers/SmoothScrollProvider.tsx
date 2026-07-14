@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import Lenis from "lenis";
 import { gsap, ScrollTrigger, registerGsap } from "@/lib/gsap";
 import { scrollRefs, pointerRefs, useScrollStore } from "@/lib/scrollStore";
+import { DESKTOP_MEDIA_QUERY, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
 
 /**
  * Fully-horizontal scroll engine.
@@ -70,14 +71,19 @@ export default function SmoothScrollProvider({
     // Vertical [data-section] offsets (mobile only) — drives the section label
     // in the progress footer, which ScrollTrigger's onUpdate handles on desktop.
     let mobileSectionTops: number[] = [];
+    // Stable progress denominator (mobile only). The live lenis.limit shrinks/
+    // grows ~60-100px when the browser address bar auto-hides mid-gesture,
+    // which used to jerk the 3D camera. Measured once at setup and re-measured
+    // only on real viewport changes (rotation / width change) — never per event.
+    let mobileLimit = 0;
 
     // ── Lenis → velocity ref + drives ScrollTrigger (desktop) / progress (mobile) ──
     lenis.on("scroll", (e: { velocity?: number; scroll?: number; limit?: number; direction?: number }) => {
       scrollRefs.velocity = e.velocity ?? 0;
       if (mobileMode) {
-        const limit = e.limit ?? lenis.limit ?? 0;
         const scroll = e.scroll ?? lenis.scroll ?? 0;
-        scrollRefs.progress = limit > 0 ? Math.min(1, Math.max(0, scroll / limit)) : 0;
+        scrollRefs.progress =
+          mobileLimit > 0 ? Math.min(1, Math.max(0, scroll / mobileLimit)) : 0;
         if (e.direction === 1 || e.direction === -1) scrollRefs.direction = e.direction;
         // Section = last panel whose top has crossed the viewport centre.
         const center = scroll + window.innerHeight / 2;
@@ -104,7 +110,9 @@ export default function SmoothScrollProvider({
     const mm = gsap.matchMedia();
 
     // ── DESKTOP: pin + horizontal translate ──
-    mm.add("(min-width: 768px) and (pointer: fine)", () => {
+    // Condition string is shared with useIsMobile + the `desktop:` CSS variant
+    // so JS behavior and structural CSS can never disagree (see useIsMobile.ts).
+    mm.add(DESKTOP_MEDIA_QUERY, () => {
       const track = trackRef.current!;
       const distance = () => Math.max(0, track.scrollWidth - window.innerWidth);
 
@@ -139,13 +147,49 @@ export default function SmoothScrollProvider({
       });
 
       // Expose click-to-section scrolling (maps 1:1 to vertical scroll under the pin).
-      setScrollToSection((index: number) => {
+      const goToSection = (index: number) => {
         const target = sectionOffsets[index] ?? 0;
         lenis.scrollTo(target, { duration: 1.4 });
-      });
+      };
+      setScrollToSection(goToSection);
+
+      // Keyboard-focus sync. The pin wrapper is overflow-x:clip (not hidden),
+      // so a Tab press can no longer silently scroll it out from under the
+      // translate. Instead, when focus lands in an off-screen panel we drive
+      // the REAL scroll pipeline to that panel's section, keeping the DOM,
+      // the 3D camera and the progress HUD in agreement (this also carries
+      // Work's sr-only project links, which sit at the panel's start).
+      const onFocusIn = (e: FocusEvent) => {
+        const el = e.target as HTMLElement | null;
+        const panel = el?.closest<HTMLElement>("[data-section]");
+        if (!el || !panel) return;
+        // Undo any focus-scroll the browser managed on other ancestors (the
+        // viewport can still be nudged horizontally via body overflow-x).
+        const doc = document.scrollingElement;
+        if (doc && doc.scrollLeft !== 0) doc.scrollLeft = 0;
+        if (pinRef.current && pinRef.current.scrollLeft !== 0) {
+          pinRef.current.scrollLeft = 0;
+        }
+        // Fully on screen already (e.g. clicking a control in the active
+        // panel) — nothing to sync.
+        const r = el.getBoundingClientRect();
+        if (
+          r.left >= 0 &&
+          r.top >= 0 &&
+          r.right <= window.innerWidth &&
+          r.bottom <= window.innerHeight
+        ) {
+          return;
+        }
+        const panels = gsap.utils.toArray<HTMLElement>("[data-section]", track);
+        const index = panels.indexOf(panel);
+        if (index >= 0) goToSection(index);
+      };
+      track.addEventListener("focusin", onFocusIn);
 
       setReady(true);
       return () => {
+        track.removeEventListener("focusin", onFocusIn);
         tween.scrollTrigger?.kill();
         tween.kill();
       };
@@ -154,17 +198,43 @@ export default function SmoothScrollProvider({
     // ── MOBILE / coarse: vertical stack, no pin. Progress comes from Lenis
     //    directly (see the scroll handler above) — walking the corridor by
     //    scrolling down the tall page. ──
-    mm.add("(max-width: 767px), (pointer: coarse)", () => {
+    mm.add(MOBILE_MEDIA_QUERY, () => {
       mobileMode = true;
+      const measureLimit = () => {
+        mobileLimit = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+      };
+      measureLimit();
       // seed once in case the user hasn't scrolled yet
-      scrollRefs.progress = lenis.limit > 0 ? lenis.scroll / lenis.limit : 0;
+      scrollRefs.progress =
+        mobileLimit > 0 ? Math.min(1, lenis.scroll / mobileLimit) : 0;
       const measure = () => {
         mobileSectionTops = gsap.utils
           .toArray<HTMLElement>("[data-section]")
           .map((el) => el.getBoundingClientRect().top + lenis.scroll);
       };
       measure();
-      window.addEventListener("resize", measure);
+      // Section tops re-measure on every resize; the progress denominator only
+      // on width changes / rotation — an address-bar collapse fires resize with
+      // the SAME width, and re-deriving the limit there is exactly the hitch
+      // this guards against.
+      let lastWidth = window.innerWidth;
+      const onResize = () => {
+        if (window.innerWidth !== lastWidth) {
+          lastWidth = window.innerWidth;
+          measureLimit();
+        }
+        measure();
+      };
+      const onOrientation = () => {
+        lastWidth = window.innerWidth;
+        measureLimit();
+        measure();
+      };
+      window.addEventListener("resize", onResize);
+      window.addEventListener("orientationchange", onOrientation);
       setScrollToSection((index: number) => {
         const sections = gsap.utils.toArray<HTMLElement>("[data-section]");
         const el = sections[index];
@@ -173,7 +243,8 @@ export default function SmoothScrollProvider({
       setReady(true);
       return () => {
         mobileMode = false;
-        window.removeEventListener("resize", measure);
+        window.removeEventListener("resize", onResize);
+        window.removeEventListener("orientationchange", onOrientation);
         mobileSectionTops = [];
       };
     });
@@ -195,10 +266,18 @@ export default function SmoothScrollProvider({
   }, []);
 
   return (
-    <div ref={pinRef} className="relative z-10 w-full overflow-hidden md:h-screen">
+    /* overflow CLIP, not hidden: a hidden box is still programmatically
+       scrollable, so the browser's bring-into-view on Tab used to jump
+       scrollLeft ~16k px and desync the track from ScrollTrigger. clip is not
+       scrollable at all. Both axes must be clip — per the CSS overflow spec,
+       pairing clip with hidden computes the clip axis back to hidden. */
+    <div
+      ref={pinRef}
+      className="relative z-10 w-full overflow-x-clip overflow-y-clip desktop:h-screen"
+    >
       <div
         ref={trackRef}
-        className="flex w-full flex-col md:h-screen md:w-max md:flex-row md:flex-nowrap"
+        className="flex w-full flex-col desktop:h-screen desktop:w-max desktop:flex-row desktop:flex-nowrap"
       >
         {children}
       </div>

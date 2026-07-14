@@ -89,8 +89,11 @@ export default function RootLayout({
         <PreloadResources />
         {/* Full 3D scrolling scene — fixed behind everything (desktop + mobile) */}
         <SceneCanvas />
-        {children}
+        {/* Nav precedes the content so keyboard tab order starts at the
+            navigation (WCAG 2.4.3); it is position:fixed, so visual layout
+            is unchanged. */}
         <Nav />
+        {children}
         <ProgressBar />
         <ProjectLink />
         <MobileStops />

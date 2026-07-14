@@ -40,19 +40,26 @@ export default function ProgressBar() {
 
   return (
     <>
+      {/* Bottom scrim — mirrors the nav's top treatment so the fixed HUD band
+          (readout strip, sound chip, progress rail) never sits raw over a lit
+          bay / starfield / warp flash. Below both z-40 HUD layers. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-32 bg-gradient-to-t from-bg/70 to-transparent"
+      />
       {/* Diegetic ship readout + sound chip (sits just above the bar) */}
       <HudReadout />
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-[8vw] pb-5"
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-[8vw] pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
       >
       <div className="flex items-center gap-4">
         {/* Counter + live section label (chapter marker, ship naming) */}
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[10px] tracking-[0.25em] text-ink-dim tabular-nums">
+          <span className="font-mono text-[11px] tracking-[0.25em] text-ink-dim tabular-nums">
             {String(sectionIndex + 1).padStart(2, "0")}
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink transition-opacity duration-300">
+          <span className="font-mono text-[11px] uppercase tracking-[0.25em] text-ink transition-opacity duration-300">
             {shipLabel(SECTIONS[sectionIndex]?.id, SECTIONS[sectionIndex]?.label ?? "")}
           </span>
         </div>
@@ -72,7 +79,7 @@ export default function ProgressBar() {
         </div>
 
         {/* Total */}
-        <span className="font-mono text-[10px] tracking-[0.25em] text-ink-dim tabular-nums">
+        <span className="font-mono text-[11px] tracking-[0.25em] text-ink-dim tabular-nums">
           {String(total).padStart(2, "0")}
         </span>
       </div>

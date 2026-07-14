@@ -127,7 +127,7 @@ export default function Contact() {
       data-section
       data-label="Contact"
       id="contact"
-      className="relative flex min-h-screen w-full shrink-0 flex-col justify-center gap-12 px-[8vw] py-24 md:h-screen md:w-screen md:gap-[3.5vh] md:py-0 md:pb-[14vh] md:pt-[10vh]"
+      className="relative flex min-h-screen w-full shrink-0 flex-col justify-center gap-12 px-[8vw] py-24 desktop:h-screen desktop:w-screen desktop:gap-[3.5vh] desktop:py-0 desktop:pb-[14vh] desktop:pt-[10vh]"
     >
       {/* No kicker row — nav, progress rail and HUD readout already all say
           BRIDGE; the finale keeps one statement and two controls, nothing else. */}
@@ -157,12 +157,12 @@ export default function Contact() {
       </h2>
 
       {/* Magnetic email button + supporting copy */}
-      <div className="flex w-full flex-col gap-12 md:flex-row md:items-end md:justify-between md:gap-8">
+      <div className="flex w-full flex-col gap-12 desktop:flex-row desktop:items-end desktop:justify-between desktop:gap-8">
         {/* No copy card here — it sat straight over the bridge kiosks and the
             console row (QA: "the box blocks github linkedin and console").
             The comms flavour lives IN the world now: the HAIL console centre-
             bridge fires the same mailto as the button below. */}
-        <div className="flex flex-col gap-8 md:gap-[2.5vh]">
+        <div className="flex flex-col gap-8 desktop:gap-[2.5vh]">
           <motion.a
             ref={btnRef}
             href={`mailto:${SITE.email}`}
@@ -216,10 +216,20 @@ export default function Contact() {
 
         {/* Socials live IN THE WORLD — the two comms kiosks flanking the
             bridge console (Corridor's SocialTerminal). Assistive tech and
-            crawlers get this hidden equivalent, not an on-screen duplicate. */}
-        <nav aria-label="Social links" className="sr-only">
+            crawlers get this hidden equivalent, not an on-screen duplicate.
+            Keyboard focus, however, must be VISIBLE (WCAG 2.4.7): while a link
+            is focus-visible it un-clips into a HUD-style chip pinned above the
+            footer. sr-only keeps position:absolute, so we only undo the 1px
+            clip + set coordinates — no cascade fight with `not-sr-only`. */}
+        <nav aria-label="Social links">
           {SITE.socials.map((s) => (
-            <a key={s.label} href={s.href} target="_blank" rel="noopener noreferrer">
+            <a
+              key={s.label}
+              href={s.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="sr-only focus-visible:bottom-[14vh] focus-visible:right-[8vw] focus-visible:z-50 focus-visible:m-0 focus-visible:h-auto focus-visible:w-auto focus-visible:overflow-visible focus-visible:[clip-path:none] focus-visible:border focus-visible:border-accent focus-visible:bg-bg-elev/90 focus-visible:px-4 focus-visible:py-2 focus-visible:font-mono focus-visible:text-[11px] focus-visible:uppercase focus-visible:tracking-[0.22em] focus-visible:text-ink focus-visible:backdrop-blur-md"
+            >
               {s.label}
             </a>
           ))}

@@ -1,6 +1,8 @@
-/** Diegetic ship-HUD naming for the nav/progress chrome. The descriptive
- *  SECTIONS labels in constants stay the source of truth for aria text —
- *  these are the in-fiction display names layered on top. */
+/** Diegetic ship-HUD naming for the nav/progress chrome. These visible
+ *  in-fiction names are PART of each control's accessible name (WCAG 2.5.3
+ *  label-in-name: voice-control users say what they see); the descriptive
+ *  SECTIONS labels from constants are appended as an sr-only suffix, e.g.
+ *  "MANIFEST — Intro". */
 export const SHIP_SECTION_LABELS: Record<string, string> = {
   hero: "MANIFEST",
   work: "EXHIBITS",

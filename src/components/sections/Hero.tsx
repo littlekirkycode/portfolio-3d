@@ -41,7 +41,9 @@ export default function Hero() {
       data-label="Intro"
       id="hero"
       tabIndex={-1}
-      className="relative flex min-h-screen w-full shrink-0 flex-col justify-end px-[8vw] pb-[18vh] pt-24 outline-none md:h-screen md:w-screen"
+      /* min-h-svh (small viewport): with the mobile URL bar visible, 100vh used
+         to push the scroll cue below the first-paint fold. */
+      className="relative flex min-h-svh w-full shrink-0 flex-col justify-end px-[8vw] pb-[18vh] pt-24 outline-none desktop:h-screen desktop:w-screen"
     >
       <div ref={fadeRef}>
         <motion.div
@@ -60,7 +62,7 @@ export default function Hero() {
               <br />
               {SITE.location}
             </p>
-            <p className="mt-3 border-t border-line pt-3 font-mono text-[10px] uppercase tracking-[0.22em] text-ink-dim/80">
+            <p className="mt-3 border-t border-line pt-3 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-dim">
               CREW: 1 — does everything
             </p>
           </HudFrame>

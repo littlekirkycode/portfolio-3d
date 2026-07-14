@@ -34,19 +34,23 @@ export default function Nav() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-24 bg-gradient-to-b from-bg/70 to-transparent"
         />
-        {/* Monogram → back to intro (full name lives in the hero, not repeated here) */}
+        {/* Monogram → back to intro (full name lives in the hero, not repeated
+            here). Accessible name contains the visible "JK" (WCAG 2.5.3). */}
         <button
           type="button"
           data-cursor
-          aria-label={SITE.name}
+          aria-label={`JK — ${SITE.name}, back to intro`}
           onClick={() => go(0)}
           className="pointer-events-auto font-mono text-xs uppercase tracking-[0.25em] text-ink transition-opacity hover:opacity-60"
         >
           JK<span className="text-accent">.</span>
         </button>
 
-        {/* Desktop section list (CSS-gated so there's no first-paint flash) */}
-        <nav className="pointer-events-auto hidden items-center gap-8 md:flex">
+        {/* Desktop section list (CSS-gated so there's no first-paint flash).
+            The visible ship name IS the accessible name (WCAG 2.5.3 label-in-
+            name — voice control users say what they see), with an sr-only
+            descriptive suffix: "MANIFEST — Intro". */}
+        <nav className="pointer-events-auto hidden items-center gap-8 desktop:flex">
             {SECTIONS.map((section, i) => {
               const active = i === sectionIndex;
               return (
@@ -55,7 +59,6 @@ export default function Nav() {
                   type="button"
                   data-cursor
                   aria-current={active ? "true" : undefined}
-                  aria-label={section.label}
                   onClick={() => go(i)}
                   className="group relative flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em]"
                 >
@@ -74,26 +77,28 @@ export default function Nav() {
                     )}
                   </span>
                   <span
-                    aria-hidden
                     className={`transition-colors duration-300 ${
                       active ? "text-ink" : "text-ink-dim group-hover:text-ink"
                     }`}
                   >
                     {shipLabel(section.id, section.label)}
                   </span>
+                  <span className="sr-only"> — {section.label}</span>
                 </button>
               );
             })}
         </nav>
 
-        {/* Mobile menu toggle (CSS-gated) */}
+        {/* Mobile menu toggle (CSS-gated). The two hairlines are ~24x8px, so
+            padding + matching negative margins grow the hit area to 48x44px
+            (platform tap-target guidance) with zero visual/layout change. */}
         <button
             type="button"
             data-cursor
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             onClick={() => useScrollStore.getState().toggleMenu()}
-            className="pointer-events-auto flex flex-col items-end gap-1.5 md:hidden"
+            className="pointer-events-auto -mx-3 -my-[18px] flex flex-col items-end gap-1.5 px-3 py-[18px] desktop:hidden"
           >
             <span
               className={`block h-px w-6 bg-ink transition-transform duration-300 ${
@@ -128,7 +133,6 @@ export default function Nav() {
                     type="button"
                     data-cursor
                     aria-current={active ? "true" : undefined}
-                    aria-label={section.label}
                     onClick={() => go(i)}
                     initial={{ opacity: 0, y: 28 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -144,13 +148,13 @@ export default function Nav() {
                       {String(i + 1).padStart(2, "0")}
                     </span>
                     <span
-                      aria-hidden
                       className={`font-display text-5xl leading-none transition-colors ${
                         active ? "text-accent" : "text-ink"
                       }`}
                     >
                       {shipLabel(section.id, section.label)}
                     </span>
+                    <span className="sr-only"> — {section.label}</span>
                   </motion.button>
                 );
               })}

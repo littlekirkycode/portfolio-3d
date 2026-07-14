@@ -1,6 +1,19 @@
 @import "tailwindcss";
 
 /* ------------------------------------------------------------------ */
+/*  `desktop:` variant — the pinned horizontal-corridor mode           */
+/*                                                                     */
+/*  Must express the EXACT same condition as DESKTOP_MEDIA_QUERY in    */
+/*  src/lib/useIsMobile.ts (consumed by useIsMobile and both           */
+/*  gsap.matchMedia gates in SmoothScrollProvider). Width-only `md:`   */
+/*  used to hand iPads / landscape phones the desktop layout while JS  */
+/*  ran the mobile branch — a one-viewport, unscrollable page. Use     */
+/*  `desktop:` for structural layout that must agree with the JS       */
+/*  scroll engine; `md:` remains fine for purely cosmetic sizing.      */
+/* ------------------------------------------------------------------ */
+@custom-variant desktop (@media (min-width: 768px) and (pointer: fine));
+
+/* ------------------------------------------------------------------ */
 /*  Design tokens — dark & cinematic                                   */
 /*  (@theme tokens are emitted as :root CSS vars, so JS/shaders can     */
 /*   read e.g. getComputedStyle(root).getPropertyValue('--color-accent')) */

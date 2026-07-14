@@ -2,17 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useMotionValue, useSpring } from "motion/react";
+import { useReducedMotion } from "@/lib/useReducedMotion";
 
 /**
  * Cinematic custom cursor: a tight dot that tracks the pointer 1:1 and a
  * trailing ring lagged behind via a soft spring. Renders only on fine
  * pointers; on mount it tags <html> so globals.css hides the native cursor.
  *
+ * Fully disabled (native cursor kept — has-custom-cursor never set) when the
+ * OS asks for reduced motion (the spring-lagged ring is exactly the kind of
+ * secondary motion vestibular users opt out of) or under forced-colors mode,
+ * where mix-blend-difference is unreliable.
+ *
  * State changes (hover / press) are coarse, so React state is fine here —
  * the per-frame tracking is driven entirely by motion values + a spring,
  * never by setState.
  */
 export default function Cursor() {
+  const reduced = useReducedMotion();
   const [enabled, setEnabled] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -44,15 +51,22 @@ export default function Cursor() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const fine = window.matchMedia("(pointer: fine)");
-    const sync = () => setEnabled(fine.matches);
+    const forced = window.matchMedia("(forced-colors: active)");
+    const sync = () => setEnabled(fine.matches && !forced.matches);
     sync();
     fine.addEventListener("change", sync);
-    return () => fine.removeEventListener("change", sync);
+    forced.addEventListener("change", sync);
+    return () => {
+      fine.removeEventListener("change", sync);
+      forced.removeEventListener("change", sync);
+    };
   }, []);
 
-  // Attach pointer listeners + hide the native cursor only while enabled.
+  // Attach pointer listeners + hide the native cursor only while active —
+  // under reduced motion the class is never added, so the native cursor stays.
+  const active = enabled && !reduced;
   useEffect(() => {
-    if (!enabled || typeof window === "undefined") return;
+    if (!active || typeof window === "undefined") return;
     const root = document.documentElement;
     root.classList.add("has-custom-cursor");
 
@@ -111,9 +125,9 @@ export default function Cursor() {
       window.removeEventListener("pointerout", onWindowOut);
       window.removeEventListener("blur", park);
     };
-  }, [enabled, x, y]);
+  }, [active, x, y]);
 
-  if (!enabled) return null;
+  if (!active) return null;
 
   return (
     <div

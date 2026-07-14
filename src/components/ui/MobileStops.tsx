@@ -36,17 +36,21 @@ export default function MobileStops() {
     lenis.scrollTo(target * lenis.limit, { duration: 1.05 });
   };
 
+  /* h-11/w-11 = 44px tap targets (platform guidance for a control tapped ~9
+     times per traversal); gap-3 keeps the two chevrons comfortably distinct. */
   const btn =
-    "flex h-10 w-10 items-center justify-center border border-line bg-bg-elev/60 " +
+    "flex h-11 w-11 items-center justify-center border border-line bg-bg-elev/60 " +
     "font-mono text-sm text-ink-dim backdrop-blur-md transition-colors " +
     "active:border-accent active:text-ink";
 
   return (
     /* 60% down the right edge: thumb zone, below the bay info panel's text
-       rows and clear of the sound chip / progress footer at the bottom */
+       rows and clear of the sound chip / progress footer at the bottom.
+       safe-area inset keeps the chevrons off rounded corners / the notch
+       side in landscape (env() is 0 where there are no insets). */
     <nav
       aria-label="Corridor stops"
-      className="fixed right-2 top-[60%] z-40 flex -translate-y-1/2 flex-col gap-2"
+      className="fixed right-[calc(0.5rem+env(safe-area-inset-right))] top-[60%] z-40 flex -translate-y-1/2 flex-col gap-3"
     >
       <button type="button" aria-label="Previous stop" onClick={() => hop(-1)} className={btn}>
         <span aria-hidden>↑</span>
