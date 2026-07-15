@@ -242,9 +242,9 @@ export const EXPERIENCE: { role: string; org: string; dates: string }[] = [
   { role: "Product Engineer", org: "Allied · Defence Mfg.", dates: "2026 — Now" },
   { role: "Founder & Lead Engineer", org: "Self Platform", dates: "2024 — Now" },
   { role: "Lead Engineer & Consultant", org: "Nuremi", dates: "2025 — 2026" },
+  { role: "Founders University", org: "Accelerator · $25K offer", dates: "2024 — 2025" },
   { role: "Full-Stack Engineer", org: "Siemens", dates: "2022 — 2024" },
   { role: "Apprentice Engineer", org: "J2 Innovations", dates: "2021 — 2022" },
-  { role: "Founders University", org: "Accelerator · $25K offer", dates: "2024 — 2025" },
 ];
 
 /** Milestones — shown in the Achievements room. Edit freely. */
