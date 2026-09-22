@@ -25,10 +25,9 @@ import {
   CeilingFixtures,
   CoveLights,
   LightShafts,
-  FloorStuds,
-  DustMotes,
   FloorReflection,
 } from "./corridorFx";
+import Wayfinding from "./rooms/Wayfinding";
 
 /** Ceiling light fixture X positions (warm point lights for real illumination). */
 const FIXTURES = [10, 40, 70, 100, 130, 158];
@@ -596,21 +595,18 @@ function SkirtingStrips() {
 export default function Corridor({
   mobile = false,
   quality = "high",
-  animate = true,
 }: {
   mobile?: boolean;
   quality?: GfxQuality;
-  animate?: boolean;
 }) {
   return (
     <group>
       <CeilingFixtures />
       <LightShafts />
-      <CoveLights animate={animate} />
-      <FloorStuds animate={animate} />
-      <DustMotes count={mobile ? 260 : 600} animate={animate} />
+      <CoveLights />
       {!mobile && quality === "high" && <FloorReflection />}
       <WallRibs />
+      <Wayfinding />
       <FloorWashes />
       <SkirtingStrips />
 

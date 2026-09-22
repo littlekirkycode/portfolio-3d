@@ -382,7 +382,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
 
       {/* themed objects (kept low / to the sides) */}
       <group position={[0, 0, -ALCOVE_DEPTH + 1.55]}>
-        <RoomProps theme={room.theme} accent={room.accent} animate={animate} />
+        <RoomProps theme={room.theme} accent={room.accent} animate={animate} mobile={mobile} />
       </group>
       </group>
 

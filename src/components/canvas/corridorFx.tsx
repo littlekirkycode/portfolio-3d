@@ -18,7 +18,6 @@ import {
   GALLERY_SIDE,
   GATES,
   PORTHOLES,
-  START_X,
   BRIDGE_ENTER_P,
   ATRIUM_C,
   TILE,
@@ -34,14 +33,9 @@ import {
  *    ribs + beams read as portal frames, the fixtures sit between them.
  *  - CoveLights: a continuous ledge on both walls with a bright front line,
  *    an up-wash and a down-wash, tinted toward the nearest bay's accent so
- *    the hall shifts colour as you walk room to room. A slow data pulse runs
- *    the length of the strip.
+ *    the hall shifts colour as you walk room to room.
  *  - LightShafts: faint haze volumes under each troffer (view-angle softened
  *    so they read as light in air, not as solid wedges).
- *  - FloorStuds: two lanes of deck studs with a travelling guide pulse that
- *    follows the scroll direction and speeds up with scroll velocity.
- *  - DustMotes: a few hundred drifting motes around the camera, brighter
- *    under the fixtures.
  *  - FloorReflection: a half-res planar reflection of the hall (desktop +
  *    "high" tier only), streak-blurred like a polished deck and added on top
  *    of the lit kit floor so emitters mirror in the floor.
@@ -158,7 +152,10 @@ void main() {
   float ey = 1.0 - smoothstep(0.35, 1.0, c.y);
   float core = ex * ey;
   float louvre = 0.88 + 0.12 * smoothstep(0.2, 0.8, abs(fract(vUv.x * uAspect * 3.0) - 0.5) * 2.0);
-  vec3 col = uColor * uIntensity * uDim * (0.45 + 0.75 * core) * louvre;
+  // tame the fixture directly overhead: walking under each one used to fire
+  // a full-frame bloom flare at the top of the screen
+  float near = mix(0.45, 1.0, smoothstep(1.5, 5.5, distance(cameraPosition, vWorld)));
+  vec3 col = uColor * uIntensity * uDim * near * (0.45 + 0.75 * core) * louvre;
   gl_FragColor = vec4(col, 1.0);
   ${TAIL_F}
 }`,
@@ -304,7 +301,6 @@ const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _qIdentity = new THREE.Quaternion();
 const FACE_DOWN = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
-const FACE_UP = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
 function useInstances(
   ref: RefObject<THREE.InstancedMesh | null>,
@@ -345,7 +341,7 @@ export function CeilingFixtures() {
   const beams = useRef<THREE.InstancedMesh>(null);
   const beamLines = useRef<THREE.InstancedMesh>(null);
 
-  const diffMat = useMemo(() => makeDiffuserMaterial(CEIL_COLOR, 1.6, FIX_L / FIX_W), []);
+  const diffMat = useMemo(() => makeDiffuserMaterial(CEIL_COLOR, 1.25, FIX_L / FIX_W), []);
   const haloMat = useMemo(() => makeHaloMaterial("#a9c2f0", 0.22), []);
 
   useInstances(housing, FIXTURE_XS, WALL_H - 0.045, _qIdentity);
@@ -507,7 +503,7 @@ function buildCoveGeometry(runs: Run[]): THREE.BufferGeometry {
   return g;
 }
 
-export function CoveLights({ animate = true }: { animate?: boolean }) {
+export function CoveLights() {
   const runs = useMemo(() => coveRuns(), []);
   const geo = useMemo(() => buildCoveGeometry(runs), [runs]);
   const mat = useMemo(
@@ -535,23 +531,21 @@ void main() {
 }`,
         fragmentShader: /* glsl */ `
 ${HEAD_F}
-uniform float uTime;
 uniform float uDim;
 varying vec3 vColor;
 varying float vF;
 varying float vKind;
 varying float vX;
 void main() {
-  // slow data pulse running down the hall
-  float pulse = pow(0.5 + 0.5 * sin(vX * 0.12 - uTime * 0.9), 28.0);
+  // steady — no travelling pulses (they read as flashing)
   float k;
-  if (vKind < 0.5) k = 1.9 + 1.4 * pulse;                    // front line (blooms)
-  else if (vKind < 1.5) k = (0.30 + 0.25 * pulse) * pow(vF, 1.7); // up-wash
-  else k = (0.16 + 0.12 * pulse) * pow(vF, 2.4);             // down-wash
+  if (vKind < 0.5) k = 1.6;                          // front line
+  else if (vKind < 1.5) k = 0.30 * pow(vF, 1.7);     // up-wash
+  else k = 0.16 * pow(vF, 2.4);                      // down-wash
   gl_FragColor = vec4(vColor * k * uDim, 1.0);
   ${TAIL_F}
 }`,
-        uniforms: { uTime: { value: 0 }, uDim: { value: 1 } },
+        uniforms: { uDim: { value: 1 } },
       }),
     [],
   );
@@ -571,8 +565,7 @@ void main() {
     mesh.computeBoundingSphere();
   }, [runs]);
 
-  useFrame((_, dt) => {
-    if (animate) mat.uniforms.uTime.value += Math.min(dt, 1 / 30);
+  useFrame(() => {
     mat.uniforms.uDim.value = bridgeDim();
   });
 
@@ -585,152 +578,6 @@ void main() {
       <mesh geometry={geo} material={mat} frustumCulled={false} />
     </group>
   );
-}
-
-/* ── deck guide studs ────────────────────────────────────────────────────── */
-
-const STUD_Z = 2.8;
-const STUD_XS: number[] = (() => {
-  const out: number[] = [];
-  for (let x = START_X - 6; x < END_X - 3; x += 1.25) {
-    if (nearGate(x, 0.5)) continue;
-    out.push(x);
-  }
-  return out;
-})();
-
-export function FloorStuds({ animate = true }: { animate?: boolean }) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const xs = useMemo(() => [...STUD_XS, ...STUD_XS], []);
-  useLayoutEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    _s.set(1, 1, 1);
-    xs.forEach((x, i) => {
-      _p.set(x, 0.012, i < STUD_XS.length ? -STUD_Z : STUD_Z);
-      _m.compose(_p, FACE_UP, _s);
-      mesh.setMatrixAt(i, _m);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [xs]);
-  const mat = useMemo(
-    () =>
-      additiveMaterial({
-        vertexShader: INST_PLANE_V,
-        fragmentShader: /* glsl */ `
-${HEAD_F}
-uniform float uPhase;
-uniform float uBoost;
-uniform float uDim;
-varying vec2 vUv;
-varying vec3 vWorld;
-void main() {
-  vec2 c = abs(vUv - 0.5) * 2.0;
-  float shape = 1.0 - smoothstep(0.35, 1.0, length(c));
-  float band = pow(0.5 + 0.5 * sin(vWorld.x * 0.32 - uPhase), 12.0);
-  float k = (0.22 + band * (1.3 + uBoost)) * uDim;
-  gl_FragColor = vec4(vec3(0.45, 0.66, 1.0) * k, shape);
-  ${TAIL_F}
-}`,
-        uniforms: { uPhase: { value: 0 }, uBoost: { value: 0 }, uDim: { value: 1 } },
-      }),
-    [],
-  );
-  const boost = useRef(0);
-  useFrame((_, rawDt) => {
-    const dt = Math.min(rawDt, 1 / 30);
-    const v = Math.min(1, Math.abs(scrollRefs.velocity) / 40);
-    boost.current += (v - boost.current) * Math.min(1, dt * 4);
-    if (animate) mat.uniforms.uPhase.value += dt * (2.2 + 6 * boost.current) * scrollRefs.direction;
-    mat.uniforms.uBoost.value = boost.current;
-    mat.uniforms.uDim.value = bridgeDim();
-  });
-  return (
-    <instancedMesh ref={ref} args={[undefined, mat, xs.length]} frustumCulled={false}>
-      <planeGeometry args={[0.11, 0.11]} />
-    </instancedMesh>
-  );
-}
-
-/* ── dust motes ──────────────────────────────────────────────────────────── */
-
-const MOTE_SPAN = 26;
-
-export function DustMotes({ count = 600, animate = true }: { count?: number; animate?: boolean }) {
-  const size = useThree((s) => s.size);
-  const dpr = useThree((s) => s.viewport.dpr);
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    const seed = new Float32Array(count * 4);
-    let s = 1234567;
-    const rnd = () => {
-      s = (s * 16807) % 2147483647;
-      return s / 2147483647;
-    };
-    for (let i = 0; i < seed.length; i++) seed[i] = rnd();
-    // position is unused by the shader but three needs a position attribute
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-    g.setAttribute("aSeed", new THREE.BufferAttribute(seed, 4));
-    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
-    return g;
-  }, [count]);
-  const mat = useMemo(
-    () =>
-      additiveMaterial({
-        vertexShader: /* glsl */ `
-${HEAD_V}
-attribute vec4 aSeed;
-uniform float uTime;
-uniform float uCamX;
-uniform float uPx;
-uniform float uFix0;
-varying float vA;
-void main() {
-  float span = ${MOTE_SPAN.toFixed(1)};
-  float lo = uCamX - 4.0;
-  float x = lo + mod(aSeed.x * span + uTime * (0.08 + 0.14 * aSeed.w), span);
-  float y = 0.2 + aSeed.y * 3.6 + sin(uTime * 0.31 + aSeed.w * 6.283) * 0.14;
-  float z = (aSeed.z * 2.0 - 1.0) * (${HALF_W.toFixed(2)} - 0.3) + cos(uTime * 0.23 + aSeed.x * 6.283) * 0.14;
-  vec4 mvPosition = viewMatrix * vec4(x, y, z, 1.0);
-  float d = -mvPosition.z;
-  // brighter where the troffers are (pitch 4), and in the upper half
-  float lit = 0.3 + 0.7 * pow(0.5 + 0.5 * cos((x - uFix0) * 1.5708), 2.0);
-  float edge = smoothstep(0.0, 2.5, x - lo) * smoothstep(0.0, 5.0, lo + span - x);
-  vA = lit * edge * smoothstep(0.5, 1.8, d) * (0.35 + 0.65 * aSeed.w) * (0.6 + 0.4 * aSeed.y);
-  gl_PointSize = clamp((0.010 + 0.012 * aSeed.z) * uPx / max(d, 0.1), 1.0, 7.0);
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
-}`,
-        fragmentShader: /* glsl */ `
-${HEAD_F}
-uniform float uDim;
-varying float vA;
-void main() {
-  float r = length(gl_PointCoord - 0.5);
-  float a = smoothstep(0.5, 0.0, r) * vA * 0.55 * uDim;
-  gl_FragColor = vec4(vec3(0.78, 0.85, 1.0), a);
-  ${TAIL_F}
-}`,
-        uniforms: {
-          uTime: { value: 0 },
-          uCamX: { value: 0 },
-          uPx: { value: 900 },
-          uFix0: { value: RIB_X0 + RIB_PITCH / 2 },
-          uDim: { value: 1 },
-        },
-      }),
-    [],
-  );
-  useEffect(() => {
-    mat.uniforms.uPx.value = size.height * dpr;
-  }, [mat, size.height, dpr]);
-  useFrame(({ camera }, dt) => {
-    if (animate) mat.uniforms.uTime.value += Math.min(dt, 1 / 30);
-    mat.uniforms.uCamX.value = camera.position.x;
-    mat.uniforms.uDim.value = bridgeDim();
-  });
-  return <points geometry={geo} material={mat} frustumCulled={false} />;
 }
 
 /* ── planar floor reflection ─────────────────────────────────────────────── */
@@ -795,14 +642,16 @@ void main() {
 
 /** Low-res planar reflection of the whole hall, streak-blurred and ADDED on
  *  top of the lit kit floor. Mounted by Corridor only on desktop + "high".
- *  Cost control: the mirror pass re-renders the scene, so it only runs every
- *  frame while the CAMERA is moving; during a dwell (camera parked on a bay —
- *  where visitors spend most of their time) the texture is still valid and
- *  just refreshes at ~5 Hz for the animated emitters. Holds no lights, so
+ *  Cost control: the mirror pass re-renders the scene, so it only runs while
+ *  the CAMERA is moving (or right after a resize); during a dwell (camera
+ *  parked on a bay — where visitors spend most of their time) the held
+ *  texture is still valid. No periodic refresh: a stepped update read as
+ *  flicker under the moving drone. Holds no lights, so
  *  mounting/unmounting never recompiles scene materials. */
 export function FloorReflection({ scale = 0.35 }: { scale?: number }) {
   const size = useThree((s) => s.size);
   const dpr = useThree((s) => s.viewport.dpr);
+  const dirty = useRef(true);
   const reflector = useMemo(() => {
     const len = END_X + 2 - WALL_START;
     const geo = new THREE.PlaneGeometry(len, HALF_W * 2);
@@ -833,9 +682,7 @@ export function FloorReflection({ scale = 0.35 }: { scale?: number }) {
     const r = reflector;
     const render = r.onBeforeRender;
     const last = new THREE.Matrix4();
-    let lastT = -1;
     r.onBeforeRender = function (renderer, scene, camera, ...rest) {
-      const now = performance.now();
       const e = camera.matrixWorld.elements;
       const l = last.elements;
       let moved = false;
@@ -845,9 +692,9 @@ export function FloorReflection({ scale = 0.35 }: { scale?: number }) {
           break;
         }
       }
-      if (!moved && now - lastT < 200) return;
+      if (!moved && !dirty.current) return;
       last.copy(camera.matrixWorld);
-      lastT = now;
+      dirty.current = false;
       render.call(this, renderer, scene, camera, ...rest);
     };
     return () => {
@@ -858,6 +705,9 @@ export function FloorReflection({ scale = 0.35 }: { scale?: number }) {
     const w = Math.max(64, Math.round(size.width * dpr * scale));
     const h = Math.max(64, Math.round(size.height * dpr * scale));
     reflector.getRenderTarget().setSize(w, h);
+    // setSize drops the target's contents — re-render next frame even if the
+    // camera is parked (otherwise the floor sheen blinks out on a DPR change)
+    dirty.current = true;
     (reflector.material as THREE.ShaderMaterial).uniforms.uTexel.value.set(1 / w, 1 / h);
   }, [reflector, size.width, size.height, dpr, scale]);
   useEffect(

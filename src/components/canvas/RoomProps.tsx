@@ -1,12 +1,19 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import * as THREE from "three";
-import { useGLTF } from "@react-three/drei";
 import type { RoomTheme } from "@/lib/constants";
-import { withBase } from "@/lib/asset";
 import { Bob, Model, SpinY } from "./ModelLoader";
 import { FloorStory, GymDeck } from "./bayFloors";
+import SelfQuestRoom from "./rooms/SelfQuestRoom";
+import SelfAwareRoom from "./rooms/SelfAwareRoom";
+import SelfGrowRoom from "./rooms/SelfGrowRoom";
+import NuremiRoom from "./rooms/NuremiRoom";
+import XuabelleRoom, { Vitrine } from "./rooms/XuabelleRoom";
+import CapabilitiesRoom from "./rooms/CapabilitiesRoom";
+import ExperienceRoom from "./rooms/ExperienceRoom";
+import AlliedRoom from "./rooms/AlliedRoom";
+import MilestonesRoom from "./rooms/MilestonesRoom";
 
 /** Shared soft radial gradient for the plinth under-glow pucks — one canvas
  *  texture for every showcase in every bay (module cache; client-only, this
@@ -30,8 +37,10 @@ function getPuckTex(): THREE.CanvasTexture {
 }
 
 /**
- * Each bay is composed (not just dressed) with a small set of low-poly props that
- * evoke its specific app, with deliberate art direction:
+ * Each bay is composed around a bespoke INSTALLATION that visualises its project
+ * (./rooms/* — quest board, AI core + memory graph, streak wall, city hologram,
+ * boutique vitrines, skill racks, career staircase, inspection cell, hall of
+ * fame), supported by low-poly props, with deliberate art direction:
  *  - large objects (treadmill, desk, tower) are ANCHORED to the back/sides,
  *    angled so their profile faces the opening — never floating mid-floor;
  *  - small "showcase" objects (globe, ring, gem, trophy, drone) sit ELEVATED on a
@@ -98,74 +107,21 @@ function Plinth({
   );
 }
 
-/** The drone GLB is a fully SKINNED rig (every mesh is armature-driven), and
- *  <Model>'s scene.clone(true) detaches skinned meshes from their skeleton — the
- *  clone renders collapsed/invisible (the "empty pedestal" bug). The drone is
- *  used exactly once in the app, so mount the cached scene directly (no clone)
- *  and normalise by hand from its measured rest-pose bounds:
- *  size 1.29 × 0.77 × 0.67, min-y 0.105, centre-z 0.103. */
-function DroneShowcase() {
-  const { scene } = useGLTF(withBase("/models/drone.glb"));
-  const s = 0.95 / 1.29; // largest dim → 0.95, hero-but-not-oversized
-  // hover: bottom edge floats 0.35 above the plinth top; recentre x/z drift
-  return (
-    <group scale={s} position={[0, 0.35 - 0.105 * s, -0.103 * s]}>
-      <primitive object={scene} />
-    </group>
-  );
-}
-
-/** Experience hero: company tower on its pedestal. The kit tower ships an UNLIT
- *  "window" material, so under the moody corridor light it reads as a featureless
- *  slab — give the shared material a soft emissive (the clone inside <Model>
- *  reuses the same material instance) so the facade reads as occupied floors,
- *  plus an accent base plate + roof beacon for silhouette interest as it spins. */
-function TowerShowcase({ accent, animate }: { accent: string; animate: boolean }) {
-  const { scene } = useGLTF(withBase("/models/skyscraper.glb"));
-  useMemo(() => {
-    scene.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        const std = m as THREE.MeshStandardMaterial;
-        if (std.name === "window" && std.emissive) {
-          std.emissive.set("#7fb0e8");
-          std.emissiveIntensity = 0.55;
-        }
-      }
-    });
-  }, [scene]);
-  return (
-    <Plinth h={0.9} x={-2.7} z={1.1}>
-      <SpinY speed={0.25} animate={animate}>
-        <Model name="skyscraper" height={1.1} rotation={[0, d2r(18), 0]} />
-      </SpinY>
-      {/* accent base plate under the tower + tiny roof beacon */}
-      <mesh position={[0, 0.015, 0]}>
-        <cylinderGeometry args={[0.3, 0.3, 0.03, 24]} />
-        <meshBasicMaterial color={accent} toneMapped={false} />
-      </mesh>
-      <mesh position={[0, 1.14, 0]}>
-        <sphereGeometry args={[0.022, 12, 12]} />
-        <meshBasicMaterial color={accent} toneMapped={false} />
-      </mesh>
-    </Plinth>
-  );
-}
-
 export default function RoomProps({
   theme,
   accent,
   animate,
+  mobile = false,
 }: {
   theme: RoomTheme;
   accent: string;
   animate: boolean;
+  mobile?: boolean;
 }) {
   return (
     <group>
       <FloorStory theme={theme} accent={accent} />
-      <ThemeProps theme={theme} accent={accent} animate={animate} />
+      <ThemeProps theme={theme} accent={accent} animate={animate} mobile={mobile} />
     </group>
   );
 }
@@ -174,10 +130,12 @@ function ThemeProps({
   theme,
   accent,
   animate,
+  mobile,
 }: {
   theme: RoomTheme;
   accent: string;
   animate: boolean;
+  mobile: boolean;
 }) {
   switch (theme) {
     case "gym": // SelfQuest — a FITTED-OUT ship gym, not a bay with weights in it:
@@ -263,6 +221,8 @@ function ThemeProps({
               so nothing straddles the glowing edge */}
           <Model name="kettlebell" height={0.6} position={[0.75, 0, 1.6]} rotation={[0, d2r(28), 0]} />
           <Model name="dumbbell" maxDim={0.7} position={[1.15, 0, 1.85]} rotation={[0, d2r(74), 0]} />
+          {/* the game layer: quest board + XP payouts */}
+          <SelfQuestRoom accent={accent} animate={animate} />
         </group>
       );
 
@@ -287,49 +247,29 @@ function ThemeProps({
             </mesh>
           </group>
           <Model name="officechair" height={1.05} position={[-1.55, 0, 0.45]} rotation={[0, d2r(168), 0]} />
-          <Model name="plant" height={0.7} position={[-3.0, 0, 0.1]} rotation={[0, d2r(-40), 0]} />
-          {/* mainframe cabinet in the deep back-left corner — the "real iron"
-              behind the workstation. Hugs the wall past the code terminal's
-              left edge; accent status LED so it reads as running */}
-          <Model name="mainframe" height={1.5} position={[-3.35, 0, -1.0]} rotation={[0, d2r(24), 0]} />
-          <mesh position={[-3.12, 1.28, -0.78]}>
-            <boxGeometry args={[0.05, 0.05, 0.05]} />
-            <meshBasicMaterial color={accent} toneMapped={false} />
-          </mesh>
+          {/* the stack as racked hardware along the left wall */}
+          <CapabilitiesRoom />
         </group>
       );
 
-    case "lifeos": // SelfAware — tidy workstation in the back-left corner; robot greets from the front-left corner
+    case "lifeos": // SelfAware — the assistant itself: AI core + memory graph streaming into the phone
       return (
         <group>
-          <Model name="deskq" height={0.78} position={[-2.5, 0, -0.7]} rotation={[0, d2r(30), 0]} />
-          <Model name="monitor" height={0.36} position={[-2.55, 0.78, -0.8]} rotation={[0, d2r(30), 0]} />
-          {/* this room's phone runs floor-to-top, so the robot must clear the
-              WHOLE phone band in screen space AND the desk cluster behind it —
-              it stands well left + forward, turned toward the centre */}
-          <Model name="robot" height={1.3} position={[-2.95, 0, 1.9]} rotation={[0, d2r(-25), 0]} />
-          {/* small floor plant fills the otherwise-dead strip between the phone
-              and the info panel (short enough to duck under both) */}
+          <SelfAwareRoom accent={accent} animate={animate} />
+          {/* small floor plant between the phone and the info panel */}
           <Model name="plant" height={0.4} position={[-0.25, 0, 1.05]} rotation={[0, d2r(70), 0]} />
         </group>
       );
 
-    case "experience": // founder workstation hugging the RIGHT wall (peeks past the timeline panel) + company tower left-front
+    case "experience": // the career as a rising staircase, the founder's ship circling above it
       return (
         <group>
-          <Model name="deskq" height={0.78} position={[3.3, 0, 0.55]} rotation={[0, d2r(-64), 0]} />
-          <Model name="monitor" height={0.34} position={[3.36, 0.78, 0.5]} rotation={[0, d2r(-64), 0]} />
-          <Model name="officechair" height={1.05} position={[3.5, 0, 1.35]} rotation={[0, d2r(-128), 0]} />
-          {/* left-FRONT, away from the screen light + accent hotspot so the tower
-              reads as lit steel with glowing windows, not a blown-out column */}
-          <TowerShowcase accent={accent} animate={animate} />
-          {/* the founder's ship, circling low over the company tower — the
-              journey motif. Kept just above the tower beacon (higher drifted
-              into the unlit band and read as a dark blob: QA slot7); a small
-              accent engine glow rides inside the spin so it stays readable */}
-          <group position={[-2.7, 0, 1.1]}>
+          {/* portrait stacks the timeline panel over the front floor, where
+              the staircase lives — it would cover the list it illustrates */}
+          {!mobile && <ExperienceRoom accent={accent} animate={animate} />}
+          <group position={[-2.7, 0, 1.0]}>
             <Bob amp={0.07} speed={1.1} animate={animate}>
-              <group position={[0, 2.3, 0]}>
+              <group position={[0, 2.35, 0]}>
                 <SpinY speed={0.35} animate={animate}>
                   <Model name="spaceship" maxDim={0.62} onFloor={false} rotation={[0, 0, d2r(-6)]} />
                   <mesh position={[0, 0.02, -0.27]}>
@@ -343,43 +283,10 @@ function ThemeProps({
         </group>
       );
 
-    case "map": // Nuremi — hero-scale globe beside the phone + compass raised to a low plinth
+    case "map": // Nuremi — the product's own view as a hologram: city, picks, route + the chat that asked
       return (
         <group>
-          {/* as big as the lane between the phone's right bezel and the glass
-              panel's left edge allows from the dwell camera — wider would clip
-              one or the other. Pulled left+forward so the panel's left border
-              grazes the sphere's edge instead of slicing the pedestal (border
-              at world x=0; globe right edge lands ≈ screen-x 0 from the dwell). */}
-          <Plinth h={0.9} x={-0.35} z={-0.85} accent={accent}>
-            <SpinY speed={0.25} animate={animate}>
-              <Model name="globe" height={1.35} />
-            </SpinY>
-          </Plinth>
-          {/* bobbing location pin over the globe's pole — the app's one-glance
-              motif ("you are here"), floating free like the holo panels */}
-          <group position={[-0.35, 0, -0.85]}>
-            <Bob amp={0.06} speed={1.4} animate={animate}>
-              <group position={[0, 2.52, 0]}>
-                <mesh position={[0, 0.1, 0]}>
-                  <sphereGeometry args={[0.085, 16, 16]} />
-                  <meshBasicMaterial color={accent} toneMapped={false} />
-                </mesh>
-                <mesh rotation-x={Math.PI}>
-                  <coneGeometry args={[0.062, 0.17, 16]} />
-                  <meshBasicMaterial color={accent} toneMapped={false} />
-                </mesh>
-              </group>
-            </Bob>
-          </group>
-          {/* on a low plinth so it reads (invisible flat on the floor); centre
-              floor stays clear for the map mat */}
-          <Plinth h={0.5} x={-1.9} z={1.5} accent={accent}>
-            <Model name="compass" maxDim={0.5} rotation={[0, d2r(-28), 0]} />
-          </Plinth>
-          {/* wayfinding signpost past the panel's right edge (x > 3.3 = clear
-              of the occlusion band) — angled like it's pointing down-route */}
-          <Model name="arrowsign" height={1.15} position={[3.45, 0, 1.15]} rotation={[0, d2r(-35), 0]} />
+          <NuremiRoom accent={accent} animate={animate} />
         </group>
       );
 
@@ -419,75 +326,37 @@ function ThemeProps({
               </SpinY>
             </group>
           </group>
+          <MilestonesRoom accent={accent} />
         </group>
       );
 
-    case "defence": // Allied — hovering drone patrol over the cargo corner + CAD bench on the right wall
+    case "defence": // Allied — an inspection cell: machined part on a turntable + the engineer's CAD bench
       return (
         <group>
-          {/* drone showcase LEFT of the blueprint screen's rays — a visible
-              drone at the old room-centre spot would clip the screen's right
-              edge from the dwell camera (hover offset is baked into
-              DroneShowcase; slow bob so it reads as flying) */}
-          <Plinth h={1.05} x={-2.65} z={0.95} accent={accent}>
-            <Bob amp={0.06} speed={1.2} animate={animate}>
-              <SpinY speed={0.3} animate={animate}>
-                <DroneShowcase />
-              </SpinY>
-            </Bob>
-          </Plinth>
+          <AlliedRoom accent={accent} animate={animate} />
           <Model name="deskq" height={0.78} position={[3.3, 0, 0.2]} rotation={[0, d2r(-70), 0]} />
           <Model name="monitor" height={0.36} position={[3.36, 0.78, 0.15]} rotation={[0, d2r(-70), 0]} />
-          {/* small accent indicator light sitting on the desk */}
           <mesh position={[3.35, 0.82, 0.55]}>
             <boxGeometry args={[0.07, 0.07, 0.07]} />
             <meshBasicMaterial color={accent} toneMapped={false} />
           </mesh>
-          {/* stacked cargo corner — now the BACKDROP behind the drone showcase;
-              varied sizes/rotations, lifted a few steps brighter so the crates
-              and the accent edge strips actually read against the dark wall */}
-          <group position={[-3.35, 0, -0.3]} rotation={[0, 0.12, 0]}>
-            <mesh position={[0, 0.39, 0]}>
-              <boxGeometry args={[0.78, 0.78, 0.78]} />
-              <meshStandardMaterial color="#756b60" roughness={0.8} metalness={0.2} />
-            </mesh>
-            <mesh position={[0, 0.7, 0.4]}>
-              <boxGeometry args={[0.8, 0.035, 0.035]} />
-              <meshBasicMaterial color={accent} toneMapped={false} />
-            </mesh>
-            <mesh position={[0.4, 0.45, 0.4]}>
-              <boxGeometry args={[0.035, 0.55, 0.035]} />
-              <meshBasicMaterial color={accent} toneMapped={false} />
-            </mesh>
-          </group>
-          <mesh position={[-3.25, 1.06, -0.4]} rotation={[0, 0.5, 0]}>
-            <boxGeometry args={[0.55, 0.55, 0.55]} />
-            <meshStandardMaterial color="#695f55" roughness={0.8} metalness={0.2} />
-          </mesh>
-          {/* field radar unit on the shop floor beside the CAD bench — a test
-              article mid-inspection. (First placement — atop the tall crate —
-              vanished into the unlit back-left corner: QA slot8.) x > 3.3
-              keeps it out of the info panel's occlusion band. */}
+          {/* field radar unit beside the bench — a test article mid-inspection */}
           <group position={[3.55, 0, 1.75]}>
             <SpinY speed={0.5} animate={animate}>
               <Model name="radar" maxDim={0.85} rotation={[0, d2r(-110), 0]} />
             </SpinY>
           </group>
-          <mesh position={[-2.7, 0.21, -0.85]} rotation={[0, -0.35, 0]}>
-            <boxGeometry args={[0.42, 0.42, 0.42]} />
-            <meshStandardMaterial color="#7a6f62" roughness={0.8} metalness={0.2} />
-          </mesh>
         </group>
       );
 
     case "habit": // SelfGrow — plants arc left-to-centre (tallest back-left) + one far-right so no dead third
       return (
         <group>
-          <Model name="plant" height={1.45} position={[-3.3, 0, -0.9]} rotation={[0, d2r(25), 0]} />
+          <Model name="plant" height={1.45} position={[-3.3, 0, 1.7]} rotation={[0, d2r(25), 0]} />
           {/* hanging grow-lamp over the tall back-left plant: rod from the bay
               ceiling (local y 4), cone shade, warm emissive face + a soft warm
               pool on the foliage below — a nurture beat, no real light added */}
-          <group position={[-3.3, 0, -0.9]}>
+          <group position={[-3.3, 0, 1.7]}>
             <mesh position={[0, 3.32, 0]}>
               <cylinderGeometry args={[0.015, 0.015, 1.36, 8]} />
               <meshStandardMaterial color="#171a24" roughness={0.6} metalness={0.5} />
@@ -534,38 +403,44 @@ function ThemeProps({
             <Model name="plant" height={0.34} position={[-0.34, 0.22, 0]} rotation={[0, d2r(40), 0]} />
             <Model name="plant" height={0.5} position={[0.34, 0.4, 0]} rotation={[0, d2r(140), 0]} />
           </group>
-          <Model name="wateringcan" height={0.36} position={[-1.35, 0, 1.5]} rotation={[0, d2r(55), 0]} />
+          <Model name="wateringcan" height={0.36} position={[-1.8, 0, 1.85]} rotation={[0, d2r(55), 0]} />
+          {/* streak wall + accountability ring */}
+          <SelfGrowRoom accent={accent} />
           {/* beyond the panel's right edge so the right third isn't empty */}
           <Model name="plant" height={0.45} position={[3.4, 0, 1.2]} rotation={[0, d2r(80), 0]} />
         </group>
       );
 
-    case "jewellery": // Xuabelle — three-plinth boutique triangle; hero ring spins, necklace drapes flat
+    case "jewellery": // Xuabelle — the boutique: every piece in its own vitrine + the storefront's lightbox
       return (
         <group>
+          <XuabelleRoom accent={accent} />
           <Plinth h={1.2} x={0} z={-0.85} accent={accent}>
-            <SpinY speed={0.7} animate={animate}>
-              <Model name="ring" maxDim={0.5} />
-            </SpinY>
+            <Vitrine label="N°01 · SOLITAIRE">
+              <SpinY speed={0.5} animate={animate}>
+                <Model name="ring" maxDim={0.42} position={[0, 0.06, 0]} />
+              </SpinY>
+            </Vitrine>
           </Plinth>
-          {/* upZ lays the flat model face-up BEFORE the bbox pass, so it floors
-              cleanly on the plinth top instead of standing edge-on mid-air */}
-          <Plinth h={0.85} x={-1.35} z={0.35} accent={accent}>
-            <Model name="necklace" maxDim={0.5} upZ rotation={[0, d2r(30), 0]} />
+          {/* upZ lays the flat model face-up BEFORE the bbox pass */}
+          <Plinth h={0.9} x={-2.6} z={1.5} accent={accent}>
+            <Vitrine label="N°02 · RIVIÈRE">
+              <Model name="necklace" maxDim={0.46} upZ rotation={[0, d2r(30), 0]} />
+            </Vitrine>
           </Plinth>
-          {/* beyond the panel's right edge — pulled forward so even the panel's
-              rounded border line clears the plinth silhouette */}
-          <Plinth h={0.85} x={3.55} z={1.75} accent={accent}>
-            <SpinY speed={0.35} animate={animate}>
-              <Model name="gem" maxDim={0.4} rotation={[0, d2r(-32), 0]} />
-            </SpinY>
+          <Plinth h={0.85} x={3.5} z={1.75} accent={accent}>
+            <Vitrine label="N°03 · EMERALD">
+              <SpinY speed={0.35} animate={animate}>
+                <Model name="gem" maxDim={0.34} position={[0, 0.08, 0]} rotation={[0, d2r(-32), 0]} />
+              </SpinY>
+            </Vitrine>
           </Plinth>
-          {/* crown deeper in the right column (same x>3.3 clear lane as the
-              gem, staggered depth) — completes the boutique triangle → quartet */}
-          <Plinth h={1.05} x={3.5} z={0.55} accent={accent}>
-            <SpinY speed={0.25} animate={animate}>
-              <Model name="crown" maxDim={0.42} rotation={[0, d2r(15), 0]} />
-            </SpinY>
+          <Plinth h={1.0} x={3.45} z={0.5} accent={accent}>
+            <Vitrine label="N°04 · TIARA">
+              <SpinY speed={0.25} animate={animate}>
+                <Model name="crown" maxDim={0.38} rotation={[0, d2r(15), 0]} />
+              </SpinY>
+            </Vitrine>
           </Plinth>
         </group>
       );
