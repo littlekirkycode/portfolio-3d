@@ -4,6 +4,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { PerformanceMonitor, useProgress } from "@react-three/drei";
 import { Suspense, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { PerspectiveCamera } from "three";
 import { useIsMobile, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
 import { useReducedMotion } from "@/lib/useReducedMotion";
@@ -20,6 +21,7 @@ import Lobby from "./Lobby";
 import Drone from "./Drone";
 import Airlock from "./Airlock";
 import Effects from "./Effects";
+import { setStudioEnv } from "./studioEnv";
 import { preloadDeferredModels } from "./ModelLoader";
 import { EYE_Y, HFOV_DESKTOP, HFOV_MOBILE } from "./hallConfig";
 
@@ -70,6 +72,42 @@ function CaptureBridge() {
     });
     return () => registerCapture(null);
   }, [gl, scene, camera]);
+  return null;
+}
+
+/**
+ * Soft studio reflection environment (PMREM of three's RoomEnvironment).
+ * Without ANY environment every metallic PBR surface — most of the GLB props
+ * and the kit trims — has nothing to reflect and renders near-black, which is
+ * why the bays' equipment read as silhouettes. Kept dim (environmentIntensity)
+ * so the "dark ship, lit exhibits" grade survives: it adds form and sheen, not
+ * fill. Symmetric cleanup like CaptureBridge.
+ */
+export const ENV_INTENSITY = 0.32;
+function StudioEnvironment() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const env = new RoomEnvironment();
+    const rt = pmrem.fromScene(env, 0.04);
+    scene.environment = rt.texture;
+    scene.environmentIntensity = ENV_INTENSITY;
+    setStudioEnv(rt.texture);
+    return () => {
+      setStudioEnv(null);
+      scene.environment = null;
+      rt.dispose();
+      pmrem.dispose();
+      env.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) {
+          m.geometry.dispose();
+          (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose());
+        }
+      });
+    };
+  }, [gl, scene]);
   return null;
 }
 
@@ -276,6 +314,7 @@ export default function Scene() {
       <Rig frozen={reduced} mobile={isMobile} />
       <FovFit mobile={isMobile} />
       <CaptureBridge />
+      <StudioEnvironment />
 
       {/* Same corridor geometry on every device — mobile framing comes from
           the Rig's portrait step-in, not from squashing the world.

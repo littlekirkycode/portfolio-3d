@@ -3,6 +3,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useKitPiece } from "./ModelLoader";
+import { useStudioEnv } from "./studioEnv";
 import {
   PACK_SCALE,
   TILE,
@@ -129,6 +130,7 @@ function InstancedTiles({
   upper?: boolean;
 }) {
   const { geometry, material } = useKitPiece(piece);
+  const env = useStudioEnv();
   // Darken + cool the shared kit atlas material: the raw colormap reads as
   // washed-out pale lavender under the hall lights; multiplying it down makes
   // the shell sit as deep blue-grey steel and lets panel seams read. Floors
@@ -143,9 +145,16 @@ function InstancedTiles({
       // UPPER wall rows fall toward true black (#0d0f16) so the ceiling zone
       // reads near-black — "dark ship, lit exhibits" colourist direction.
       if (upper) m.color.lerp(new THREE.Color("#0d0f16"), 0.62);
+      // Own (weak) reflection level: the studio environment lifts props
+      // out of silhouette, but at full strength it flattened the hall to
+      // grey — the shell keeps just a hint of sheen.
+      if (env) {
+        m.envMap = env;
+        m.envMapIntensity = piece === "kit-floor" ? 0.06 : 0.1;
+      }
     }
     return m;
-  }, [material, piece, upper]);
+  }, [material, piece, upper, env]);
   const ref = useRef<THREE.InstancedMesh>(null);
   useLayoutEffect(() => {
     const mesh = ref.current;
@@ -169,7 +178,11 @@ function InstancedTiles({
   return (
     <instancedMesh
       ref={ref}
-      args={[geometry, shellMaterial, instances.length]}
+      // material as a PROP, not in args: args changes rebuild the
+      // InstancedMesh, and the layout effect above wouldn't re-place the
+      // tiles on the new instance (the env map arrives after first mount)
+      args={[geometry, undefined, instances.length]}
+      material={shellMaterial}
       frustumCulled={false}
     />
   );
