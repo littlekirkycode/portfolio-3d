@@ -295,7 +295,7 @@ export default function Scene() {
             Corridor + BulkheadGates are procedural (never suspend) and ride
             along so the whole hull appears as one piece. */}
         <KitShell />
-        <Corridor />
+        <Corridor mobile={isMobile} quality={quality} animate={!reduced} />
         <BulkheadGates />
       </Suspense>
       {shellReady && (

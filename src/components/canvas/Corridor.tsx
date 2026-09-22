@@ -1,10 +1,11 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { GfxQuality } from "@/lib/quality";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { SITE } from "@/lib/constants";
-import { scrollRefs, fxRefs } from "@/lib/scrollStore";
+import { fxRefs } from "@/lib/scrollStore";
 import { damp } from "@/lib/math";
 import {
   HALF_W,
@@ -18,9 +19,16 @@ import {
   GALLERY_X,
   GALLERY_SPAN,
   GALLERY_SIDE,
-  BRIDGE_ENTER_P,
 } from "./hallConfig";
 import { starVertex, starFragment, makeStarUniforms, updateStarUniforms } from "./Windows";
+import {
+  CeilingFixtures,
+  CoveLights,
+  LightShafts,
+  FloorStuds,
+  DustMotes,
+  FloorReflection,
+} from "./corridorFx";
 
 /** Ceiling light fixture X positions (warm point lights for real illumination). */
 const FIXTURES = [10, 40, 70, 100, 130, 158];
@@ -417,59 +425,6 @@ function Bridge() {
   );
 }
 
-/* ── ceiling light bars ─────────────────────────────────────────────────── */
-
-const BAR_LEN = 3.2; // lit segment length
-const BAR_GAP = 1.6; // dark gap between segments
-const BAR_W = 0.26;
-
-// approach beat: the hall lights dim as you near the bridge (progress ~0.86+)
-// so the nebula owns the final frame. lerpColors writes in place — zero alloc.
-const BAR_LIT = new THREE.Color("#c9d8f4");
-const BAR_DIMMED = new THREE.Color("#232c42");
-
-/** Segmented emissive ceiling bars — replaces the old single continuous strip
- *  (which read as one blinding line down the whole hall). The bar/gap rhythm
- *  gives the walk a cadence; one instanced plane = one draw call. */
-function CeilingBars() {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const matRef = useRef<THREE.MeshBasicMaterial>(null);
-  const xs = useMemo(() => {
-    const out: number[] = [];
-    const pitch = BAR_LEN + BAR_GAP;
-    // stop short of the bridge so its window owns the final frame
-    for (let x = WALL_START + BAR_LEN / 2; x + BAR_LEN / 2 < END_X - 2; x += pitch) out.push(x);
-    return out;
-  }, []);
-  useLayoutEffect(() => {
-    const mesh = ref.current;
-    if (!mesh) return;
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)); // face down
-    const s = new THREE.Vector3(1, 1, 1);
-    const p = new THREE.Vector3();
-    xs.forEach((x, i) => {
-      p.set(x, WALL_H - 0.05, 0);
-      m.compose(p, q, s);
-      mesh.setMatrixAt(i, m);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-  }, [xs]);
-  useFrame(() => {
-    const m = matRef.current;
-    if (!m) return;
-    const t = Math.min(1, Math.max(0, (scrollRefs.progress - BRIDGE_ENTER_P) / 0.09));
-    m.color.lerpColors(BAR_LIT, BAR_DIMMED, t * t * (3 - 2 * t));
-  });
-  return (
-    <instancedMesh ref={ref} args={[undefined, undefined, xs.length]} frustumCulled={false}>
-      <planeGeometry args={[BAR_LEN, BAR_W]} />
-      <meshBasicMaterial ref={matRef} color="#c9d8f4" toneMapped={false} />
-    </instancedMesh>
-  );
-}
-
 /* ── wall dressing on the blank runs ────────────────────────────────────── */
 
 const RIB_SPACING = 4; // one rib every ~4 world units of blank wall
@@ -630,16 +585,31 @@ function SkirtingStrips() {
 }
 
 /**
- * Corridor lighting + atmosphere: segmented ceiling light bars, low warm
- * fixtures (with warm floor washes + skirting as the counter-note to the cool
- * star spill), pilaster ribs + floor guide lines on the blank runs, and the
- * three-pane observation-bridge payoff at the end. Geometry shell is in
- * <KitShell/>.
+ * Corridor lighting + atmosphere: recessed ceiling troffers on a beam grid
+ * with haze shafts, accent-handoff cove lighting on both walls, animated deck
+ * guide studs, drifting dust, and (desktop "high" tier) a polished-deck floor
+ * reflection — see corridorFx. Plus the warm low fixtures (with floor washes +
+ * skirting as the counter-note to the cool star spill), pilaster ribs + floor
+ * guide lines on the blank runs, and the three-pane observation-bridge payoff
+ * at the end. Geometry shell is in <KitShell/>.
  */
-export default function Corridor() {
+export default function Corridor({
+  mobile = false,
+  quality = "high",
+  animate = true,
+}: {
+  mobile?: boolean;
+  quality?: GfxQuality;
+  animate?: boolean;
+}) {
   return (
     <group>
-      <CeilingBars />
+      <CeilingFixtures />
+      <LightShafts />
+      <CoveLights animate={animate} />
+      <FloorStuds animate={animate} />
+      <DustMotes count={mobile ? 260 : 600} animate={animate} />
+      {!mobile && quality === "high" && <FloorReflection />}
       <WallRibs />
       <FloorWashes />
       <SkirtingStrips />

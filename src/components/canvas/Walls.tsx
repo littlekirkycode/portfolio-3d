@@ -19,6 +19,7 @@ import {
 import { RoomScreen } from "./bayScreens";
 import { InfoPanel, TimelinePanel, RoomLabel, BayPlaque } from "./bayPanels";
 import { BayMat } from "./bayFloors";
+import { BayArchitecture, BAY_PANEL } from "./bayLighting";
 import RoomProps from "./RoomProps";
 
 /* ── the structural bay layer: alcove composition + threshold emitters + the
@@ -33,9 +34,11 @@ function OpeningFrame({ accent }: { accent: string }) {
   const half = ALCOVE_OPEN_W / 2;
   return (
     <group>
-      {[-half, half].map((x, i) => (
-        <mesh key={i} position={[x, WALL_H / 2, 0.06]}>
-          <boxGeometry args={[0.09, WALL_H, 0.09]} />
+      {/* verticals on the corner pillars' opening-facing faces (the pillars
+          are 0.44 square, centred on the opening edges) */}
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[s * (half - 0.226), WALL_H / 2, 0.17]}>
+          <boxGeometry args={[0.014, WALL_H, 0.06]} />
           <meshBasicMaterial color={accent} toneMapped={false} />
         </mesh>
       ))}
@@ -80,7 +83,7 @@ function getSpillTexture(): THREE.CanvasTexture {
 }
 
 const spillGeometry = /* @__PURE__ */ new THREE.PlaneGeometry(ALCOVE_OPEN_W, SPILL_DEPTH);
-const jambGeometry = /* @__PURE__ */ new THREE.BoxGeometry(0.05, WALL_H, 0.16);
+const jambGeometry = /* @__PURE__ */ new THREE.BoxGeometry(0.07, WALL_H - 0.12, 0.012);
 
 function AccentSpill({ accent }: { accent: string }) {
   // floor glow — additive so it reads as light on the deck, not a decal rug
@@ -119,7 +122,9 @@ function AccentSpill({ accent }: { accent: string }) {
           key={s}
           geometry={jambGeometry}
           material={jambMat}
-          position={[s * (half + 0.12), WALL_H / 2, 0.1]}
+          // on the corridor-facing face of each corner pillar (0.22 proud of
+          // the wall line) — the old spot sat INSIDE the pillar box
+          position={[s * half, WALL_H / 2, 0.227]}
         />
       ))}
     </group>
@@ -171,6 +176,24 @@ const PROP_FILL_TINT = /* @__PURE__ */ new THREE.Color("#eef1f8");
 
 type BayLightSpec = { pos: THREE.Vector3; color: THREE.Color; intensity: number };
 
+/** Key light from the bay's linear ceiling fixture (bayLighting BAY_PANEL),
+ *  raking back onto the mat and props — the fixture you see is the light you
+ *  get. One extra pool slot, so
+ *  the scene's light count stays constant. */
+const SPOT_INTENSITY = 16;
+type BaySpotSpec = { pos: THREE.Vector3; target: THREE.Vector3; color: THREE.Color };
+
+const toWorld = (room: Room, [lx, ly, lz]: readonly [number, number, number]) => {
+  const m = room.side < 0 ? 1 : -1;
+  return new THREE.Vector3(room.x + m * lx, ly, room.side * HALF_W + m * lz);
+};
+
+const BAY_SPOT_RECIPES: BaySpotSpec[] = ROOMS.map((room) => ({
+  pos: toWorld(room, [BAY_PANEL.x, WALL_H - 0.16, BAY_PANEL.z]),
+  target: toWorld(room, [BAY_PANEL.x, 0.3, -2.4]), // aimed back onto the mat
+  color: new THREE.Color("#fff1e0").lerp(new THREE.Color(room.accent), 0.2),
+}));
+
 /** Per-room 4-light recipes in WORLD space (the pool mounts at the scene root,
  *  not inside the mirrored/rotated alcove groups). Alcove groups sit at
  *  [room.x, 0, side*HALF_W] with rotY 0 (-z side) or PI (+z side); the PI turn
@@ -193,6 +216,7 @@ const BAY_LIGHT_RECIPES: BayLightSpec[][] = ROOMS.map((room) => {
 
 function BayLightPool() {
   const lights = useRef<(THREE.PointLight | null)[]>([]);
+  const spot = useRef<THREE.SpotLight>(null);
   const roomIdx = useRef(-1);
   useFrame(() => {
     const f = focusAt(scrollRefs.progress);
@@ -208,7 +232,17 @@ function BayLightPool() {
         l.position.copy(spec.pos);
         l.color.copy(spec.color);
       });
+      const sp = spot.current;
+      if (sp) {
+        const ss = BAY_SPOT_RECIPES[idx];
+        sp.position.copy(ss.pos);
+        sp.color.copy(ss.color);
+        // the target isn't in the scene graph — update its matrix by hand
+        sp.target.position.copy(ss.target);
+        sp.target.updateMatrixWorld();
+      }
     }
+    if (spot.current) spot.current.intensity = SPOT_INTENSITY * f.ease;
     recipe.forEach((spec, i) => {
       const l = lights.current[i];
       if (l) l.intensity = spec.intensity * f.ease;
@@ -227,6 +261,7 @@ function BayLightPool() {
           decay={2}
         />
       ))}
+      <spotLight ref={spot} intensity={0} angle={0.95} penumbra={0.8} distance={9} decay={2} />
     </>
   );
 }
@@ -280,7 +315,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
       ] as [number, number][]).map(([px, pz], i) => (
         <mesh key={i} position={[px, WALL_H / 2, pz]}>
           <boxGeometry args={[0.44, WALL_H, 0.44]} />
-          <meshStandardMaterial color="#7b7b87" roughness={0.95} />
+          <meshStandardMaterial color="#343a4b" roughness={0.42} metalness={0.65} />
         </mesh>
       ))}
 
@@ -338,6 +373,9 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
           <RoomLabel room={room} />
         </group>
       )}
+
+      {/* architectural light: ceiling panel, accent coves + washes, corners */}
+      <BayArchitecture room={room} />
 
       {/* flush accent mat (shape per app; Nuremi = map floor) */}
       <BayMat room={room} />

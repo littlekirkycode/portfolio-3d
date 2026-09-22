@@ -124,6 +124,12 @@ const FEATURE_CAM_X = FEATURE_X;
  *  still frames head-on (flat-panel rule — see Rig). */
 export const FEATURE_RECESS_DEPTH = 1.0;
 
+/** Double-height atrium over the entrance lobby: the ~5 tile columns ending at
+ *  FEATURE_X + 4 lose their ceiling and gain a third (clerestory) wall row
+ *  (KitShell). Ceiling-mounted dressing (corridorFx) skips this run too. */
+export const ATRIUM_C = FEATURE_X - TILE; // centre column of the 5-column run
+export const inAtrium = (x: number) => Math.abs(x - ATRIUM_C) < TILE * 2.5;
+
 /** Inset of the flat "glass" display planes off the inner wall face (|z| =
  *  HALF_W). Rig's flat-panel look targets and FeatureScreen's panel MUST agree
  *  on this depth or the head-on framing slides off the panel — shared here so

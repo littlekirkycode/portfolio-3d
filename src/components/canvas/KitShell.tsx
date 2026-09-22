@@ -21,6 +21,8 @@ import {
   GALLERY_SIDE,
   FEATURE_X,
   FEATURE_RECESS_DEPTH,
+  ATRIUM_C,
+  inAtrium,
 } from "./hallConfig";
 
 /** Wall front-normal orientation. Kit walls are authored facing +Z; flip to PI
@@ -33,10 +35,6 @@ type Inst = { p: [number, number, number]; r: [number, number, number] };
  *  the casing (FW 4.8 + trim) with a jamb margin either side (Lobby dresses it). */
 const FEATURE_CUT_HALF = TILE * 1.5;
 
-/** Double-height atrium over the entrance lobby: the ~5 tile columns ending at
- *  FEATURE_X + 4 lose their ceiling and gain a third (clerestory) wall row. */
-const ATRIUM_C = FEATURE_X - TILE; // centre column of the 5-column run
-const inAtrium = (x: number) => Math.abs(x - ATRIUM_C) < TILE * 2.5;
 
 /** Build every shell tile transform (corridor + niches) once, grouped by mesh.
  *  Wall rows split by height: the ground row keeps the shell tone, everything

@@ -287,18 +287,45 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     };
   }, [actions]);
 
-  // soft vertical gradient for the scan cone (bright at the apex, fading out)
-  const coneTex = useMemo(() => {
-    const c = document.createElement("canvas");
-    c.width = 4;
-    c.height = 64;
-    const ctx = c.getContext("2d")!;
-    const g = ctx.createLinearGradient(0, 0, 0, 64);
-    g.addColorStop(0, "rgba(255,255,255,0.8)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 4, 64);
-    return new THREE.CanvasTexture(c);
+  // Scan beam: a volumetric-looking cone instead of a flat additive wedge.
+  // Brightness falls off along the beam AND toward its silhouette (view-angle
+  // term), so it reads as light in air and no longer veils the info panels it
+  // passes in front of; faint scan bands sweep outward from the lens.
+  const coneMat = useMemo(() => {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color("#9fd8ff") } },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        varying vec3 vN;
+        varying vec3 vV;
+        void main() {
+          vUv = uv;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vN = normalize(normalMatrix * normal);
+          vV = -mv.xyz;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform vec3 uColor;
+        varying vec2 vUv;
+        varying vec3 vN;
+        varying vec3 vV;
+        void main() {
+          // coneGeometry uv.y: 0 at the open base → 1 at the apex (lens)
+          float along = pow(vUv.y, 1.6);
+          float facing = pow(abs(dot(normalize(vN), normalize(vV))), 3.0);
+          float bands = 0.75 + 0.25 * smoothstep(0.7, 1.0, sin(vUv.y * 28.0 + uTime * 7.0));
+          float a = along * facing * bands * 0.2;
+          gl_FragColor = vec4(uColor * a, 1.0);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    m.toneMapped = false;
+    return m;
   }, []);
 
   // radial falloff for the anti-grav hover glow under the chassis
@@ -547,6 +574,7 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     // Scan cone: grows over ~0.4s when a bay (or the pilot) is focused.
     const scanOn = !reduced && (ease > 0.55 || gf > 0.55);
     scanScale.current = damp(scanScale.current, scanOn ? 1 : 0.001, 9, dt);
+    coneMat.uniforms.uTime.value = t.current;
     const scan = scanRef.current;
     if (scan) {
       scan.scale.setScalar(scanScale.current);
@@ -673,16 +701,7 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
         <group ref={scanRef} scale={0.001}>
           <mesh position={[0, -0.05, 0.85]} rotation-x={-Math.PI / 2}>
             <coneGeometry args={[0.55, 1.6, 24, 1, true]} />
-            <meshBasicMaterial
-              map={coneTex}
-              color="#9fd8ff"
-              transparent
-              opacity={0.4}
-              blending={THREE.AdditiveBlending}
-              side={THREE.DoubleSide}
-              depthWrite={false}
-              toneMapped={false}
-            />
+            <primitive object={coneMat} attach="material" />
           </mesh>
         </group>
 
