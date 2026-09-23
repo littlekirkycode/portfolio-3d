@@ -162,6 +162,19 @@ export default function ProjectLink() {
   const project = room?.project;
   const dossier = project?.dossier ?? null;
 
+  // In-world shortcut: clicking a bay's hero screen (Walls) asks for that
+  // bay's dossier. Honoured only when it's the bay the dock is showing.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (!dossier || !project || project.id !== id || dossierOpen) return;
+      setDossierOpen(true);
+      track("dossier_opened", { project: id });
+    };
+    window.addEventListener("open-dossier", onOpen);
+    return () => window.removeEventListener("open-dossier", onOpen);
+  }, [dossier, project, dossierOpen]);
+
   /** One slot's content. `live` = the interactive current slot; the ghost
    *  renders the same markup inert (no refs, no handlers reachable). */
   const renderSlot = (sl: Slot, live: boolean): React.ReactNode => {

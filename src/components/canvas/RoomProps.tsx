@@ -13,6 +13,7 @@ import AlliedBay from "./rooms/AlliedBay";
 import SelfGrowBay from "./rooms/SelfGrowBay";
 import XuabelleBay from "./rooms/XuabelleBay";
 import type { BayProps } from "./rooms/shared";
+import { BayIndex } from "./rooms/arrival";
 
 /**
  * Each bay is composed around a bespoke INSTALLATION that visualises its project
@@ -44,19 +45,23 @@ export default function RoomProps({
   accent,
   animate,
   mobile = false,
+  idx = -1,
 }: {
   theme: RoomTheme;
   accent: string;
   animate: boolean;
   mobile?: boolean;
+  idx?: number;
 }) {
   return (
-    <group>
-      <FloorStory theme={theme} accent={accent} />
-      <BayBoundary theme={theme}>
-        <ThemeProps theme={theme} p={{ accent, animate, mobile }} />
-      </BayBoundary>
-    </group>
+    <BayIndex.Provider value={idx}>
+      <group>
+        <FloorStory theme={theme} accent={accent} />
+        <BayBoundary theme={theme}>
+          <ThemeProps theme={theme} p={{ accent, animate, mobile }} />
+        </BayBoundary>
+      </group>
+    </BayIndex.Provider>
   );
 }
 

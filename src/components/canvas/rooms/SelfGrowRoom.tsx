@@ -3,6 +3,7 @@
 import { StreakBed } from "./selfgrow/StreakBed";
 import { GroupCircle } from "./selfgrow/GroupCircle";
 import type { NurseryMats } from "./selfgrow/kit";
+import Pokeable from "./Pokeable";
 
 /* ── SelfGrow: habit-breaking with social accountability ─────────────────────
  * A calm nursery built from two ideas:
@@ -35,7 +36,9 @@ export default function SelfGrowRoom({
   return (
     <group>
       <group name="sg-bed" position={mobile ? BED_POS_MOBILE : BED_POS} rotation-y={mobile ? -0.15 : 0} scale={mobile ? 0.44 : 1}>
-        <StreakBed accent={accent} mats={mats} animate={animate} plaque={!mobile} />
+        <Pokeable spin={false} hop={0.06}>
+          <StreakBed accent={accent} mats={mats} animate={animate} plaque={!mobile} />
+        </Pokeable>
       </group>
       {!mobile && (
         <group position={CIRCLE_POS} rotation-y={-0.2}>

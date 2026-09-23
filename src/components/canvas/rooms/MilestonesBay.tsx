@@ -8,6 +8,7 @@ import { Podium, useFameAtlas } from "./milestones/Podium";
 import { Vitrine } from "./milestones/Vitrine";
 import { Dais, DAIS_H } from "./milestones/Dais";
 import { WallPanels } from "./milestones/WallPanels";
+import Pokeable from "./Pokeable";
 
 /** Milestones bay — a hall of fame.
  *  HERO: the numbers podium (1.3M+ / 100K / 72K in gilt on the risers, a
@@ -35,15 +36,19 @@ export default function MilestonesBay({ accent, animate, mobile }: BayProps) {
           Mobile: the portrait camera steps in and the panel stacks over the
           centre, so the podium comes forward + down-scaled to sit BELOW it. */}
       <group position={mobile ? [0, DAIS_H, 1.78] : [-0.3, DAIS_H, 0.55]} scale={mobile ? 0.38 : 1}>
-        <Podium m={m} tex={atlas} laurel={!mobile} />
+        <Pokeable spin={false} hop={0.06}>
+          <Podium m={m} tex={atlas} laurel={!mobile} />
+        </Pokeable>
       </group>
 
       {/* the cup, in its vitrine — left column, back */}
       <group position={[-2.62, 0, -0.55]} rotation-y={0.3} scale={1.34}>
         <Vitrine m={m} tex={atlas}>
-          <SpinY speed={0.16} animate={animate}>
-            <Trophy m={m} />
-          </SpinY>
+          <Pokeable hop={0.1}>
+            <SpinY speed={0.16} animate={animate}>
+              <Trophy m={m} />
+            </SpinY>
+          </Pokeable>
         </Vitrine>
       </group>
 

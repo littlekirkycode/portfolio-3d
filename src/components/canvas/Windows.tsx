@@ -405,7 +405,18 @@ const PORT_Y = 2.0; // porthole centre height
 function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
   const S = GALLERY_SIDE;
   const rotY = S === 1 ? Math.PI : 0;
-  const uni = useMemo(() => makeStarUniforms(3.6, 1.3), []);
+  const glassMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: "#16203a",
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    [],
+  );
   // Matte frames: at metalness 0.5 the corridor fixture at x=100 fired a
   // grazing-angle specular up the centre mullion's side face — a blown white
   // streak across the glazing (QA: gallery "white line"). Rough + dielectric
@@ -436,16 +447,13 @@ function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
     mesh.computeBoundingSphere();
   }, [posts, S]);
 
-  useFrame((_, rawDt) => {
-    updateStarUniforms(uni, rawDt); // gallery never warps — that's the bridge's beat
-  });
 
   return (
     <group position={[GALLERY_X, 0, 0]}>
-      {/* star glazing — recessed just past the wall cut */}
-      <mesh position={[0, GLASS_Y, S * (HALF_W + 0.28)]} rotation-y={rotY}>
+      {/* clear glazing onto the real sky outside (bridge/SpaceView renders it
+          here too) — just a faint cool tint, recessed past the wall cut */}
+      <mesh position={[0, GLASS_Y, S * (HALF_W + 0.28)]} rotation-y={rotY} material={glassMat}>
         <planeGeometry args={[GALLERY_SPAN - 0.2, GLASS_H]} />
-        <shaderMaterial vertexShader={starVertex} fragmentShader={starFragment} uniforms={uni} toneMapped={false} />
       </mesh>
 
       {/* simple vertical mullions — one instanced draw */}

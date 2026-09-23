@@ -4,6 +4,7 @@ import CompactCore from "./selfaware/CompactCore";
 import MemoryCore, { ORB_R, ORB_Y } from "./selfaware/MemoryCore";
 import RecallDisplay, { RECALL_H } from "./selfaware/RecallDisplay";
 import TokenStream from "./selfaware/TokenStream";
+import Pokeable from "./Pokeable";
 
 /* ── SelfAware: an agentic AI life OS with retrieval-augmented memory ────────
  * One story, told in the free left column (query → recall → act → stream):
@@ -59,7 +60,9 @@ export default function SelfAwareRoom({
   return (
     <group name="sa-root">
       <group position={CORE}>
-        <MemoryCore accent={accent} animate={animate} wallX={WALL_X - CORE[0]} frontYaw={FRONT_YAW} />
+        <Pokeable>
+          <MemoryCore accent={accent} animate={animate} wallX={WALL_X - CORE[0]} frontYaw={FRONT_YAW} />
+        </Pokeable>
       </group>
       <TokenStream
         accent={accent}

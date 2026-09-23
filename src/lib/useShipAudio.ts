@@ -80,6 +80,64 @@ export function playQuip(escalation = 0): void {
   } catch {}
 }
 
+/** Soft "systems online" cue when a bay powers up on arrival: a low sine
+ *  swell rising a fifth, then a quiet glassy chime. Kept well under the
+ *  ambience — it's a courtesy, not an alert. */
+export function playPowerUp(): void {
+  const g = audio.graph;
+  if (!g || !audio.on) return;
+  try {
+    const ctx = g.ctx;
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(196, now);
+    o.frequency.exponentialRampToValueAtTime(294, now + 0.55);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(0.05, now + 0.18);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
+    o.connect(env);
+    env.connect(g.master);
+    o.start(now);
+    o.stop(now + 0.95);
+    const c = ctx.createOscillator();
+    c.type = "triangle";
+    c.frequency.setValueAtTime(1175, now + 0.42);
+    const ce = ctx.createGain();
+    ce.gain.setValueAtTime(0, now + 0.42);
+    ce.gain.linearRampToValueAtTime(0.018, now + 0.45);
+    ce.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+    c.connect(ce);
+    ce.connect(g.master);
+    c.start(now + 0.42);
+    c.stop(now + 1.35);
+  } catch {}
+}
+
+/** Short bright blip for poking an exhibit (pitch varies a little per poke). */
+export function playPoke(variant = 0): void {
+  const g = audio.graph;
+  if (!g || !audio.on) return;
+  try {
+    const ctx = g.ctx;
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    const f0 = 660 * Math.pow(1.122, variant % 5);
+    o.frequency.setValueAtTime(f0, now);
+    o.frequency.exponentialRampToValueAtTime(f0 * 1.5, now + 0.08);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(0.04, now + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    o.connect(env);
+    env.connect(g.master);
+    o.start(now);
+    o.stop(now + 0.25);
+  } catch {}
+}
+
 /** Filtered-noise slam + sub-sine drop — the warp flash. Riser-internal. */
 function playBoom(): void {
   const g = audio.graph;

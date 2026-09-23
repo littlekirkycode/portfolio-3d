@@ -5,6 +5,7 @@ import SelfQuestRoom, { QUEST_H } from "./SelfQuestRoom";
 import { CeilingHolo, LevelUpPod, POD_TOP } from "./selfquest/LevelUpPod";
 import { DumbbellRack, FloorDumbbell, LiftingPlatform, TrainingFloor } from "./selfquest/Gear";
 import { LootChest } from "./selfquest/LootChest";
+import Pokeable from "./Pokeable";
 
 /** SelfQuest bay — the gamified training bay.
  *  Story: the workout builds the hero.
@@ -49,7 +50,9 @@ export default function SelfQuestBay({ accent, animate, mobile }: BayProps) {
       <TrainingFloor accent={accent} />
 
       <group position={POD} rotation-y={POD_YAW}>
-        <LevelUpPod accent={accent} animate={animate} />
+        <Pokeable>
+          <LevelUpPod accent={accent} animate={animate} />
+        </Pokeable>
       </group>
 
       {/* quest log hung above the pod, a touch further back (secondary) */}

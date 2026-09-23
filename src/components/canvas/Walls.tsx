@@ -19,6 +19,8 @@ import { InfoPanel, TimelinePanel, RoomLabel } from "./bayPanels";
 import { BayMat } from "./bayFloors";
 import { BayArchitecture, BAY_PANEL } from "./bayLighting";
 import RoomProps from "./RoomProps";
+import { ArrivalDriver, ArrivalScan, Settle, BayIndex } from "./rooms/arrival";
+import { ClickTarget } from "./rooms/Pokeable";
 import { sealedOff } from "./BulkheadGates";
 import { accentLight, accentLightShare } from "./theme";
 
@@ -316,7 +318,15 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
         position={mobile ? [0, 3.2, -ALCOVE_DEPTH + 0.32] : [-1.55, cfg.screenY, -ALCOVE_DEPTH + 0.32]}
         scale={mobile ? cfg.screenScale * 0.9 : cfg.screenScale}
       >
-        <RoomScreen room={room} animate={animate} />
+        {room.project?.dossier ? (
+          <BayIndex.Provider value={ROOMS.indexOf(room)}>
+            <ClickTarget onActivate={() => window.dispatchEvent(new CustomEvent("open-dossier", { detail: room.id }))}>
+              <RoomScreen room={room} animate={animate} />
+            </ClickTarget>
+          </BayIndex.Provider>
+        ) : (
+          <RoomScreen room={room} animate={animate} />
+        )}
       </group>
 
       {/* floating holographic info — in FRONT of the props so nothing occludes it.
@@ -328,7 +338,9 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
         rotation-y={mobile ? 0 : -0.3}
         scale={mobile ? 0.6 : 1}
       >
-        {isExp ? <TimelinePanel room={room} /> : <InfoPanel room={room} />}
+        <Settle idx={ROOMS.indexOf(room)} window={[0.45, 0.95]}>
+          {isExp ? <TimelinePanel room={room} /> : <InfoPanel room={room} />}
+        </Settle>
       </group>
 
       {/* holographic name label — centred at the top of the bay. Hidden on mobile
@@ -336,19 +348,23 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
           title already shows on the screen + info panel). */}
       {!mobile && (
         <group position={[0, 3.2, -0.9]}>
-          <RoomLabel room={room} />
+          <Settle idx={ROOMS.indexOf(room)} window={[0.25, 0.7]} lift={0.08} floor={0.55}>
+            <RoomLabel room={room} />
+          </Settle>
         </group>
       )}
 
       {/* architectural light: ceiling panel, accent coves + washes, corners */}
       <BayArchitecture room={room} />
+      {/* one-shot scan sweep as the bay powers up on arrival */}
+      <ArrivalScan idx={ROOMS.indexOf(room)} accent={room.accent} animate={animate} />
 
       {/* flush accent mat (shape per app; Nuremi = map floor) */}
       <BayMat room={room} />
 
       {/* themed objects (kept low / to the sides) */}
       <group position={[0, 0, -ALCOVE_DEPTH + 1.55]}>
-        <RoomProps theme={room.theme} accent={room.accent} animate={animate} mobile={mobile} />
+        <RoomProps theme={room.theme} accent={room.accent} animate={animate} mobile={mobile} idx={ROOMS.indexOf(room)} />
       </group>
       </group>
 
@@ -362,6 +378,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
 export default function Walls({ animate = true, mobile = false }: { animate?: boolean; mobile?: boolean }) {
   return (
     <group>
+      <ArrivalDriver animate={animate} />
       {/* <BayLightPool/> is hoisted to Scene's root: mounting its 5 lights
           here (after shellReady) changed the scene light count mid-boot and
           recompiled every lit material — a multi-second freeze. */}

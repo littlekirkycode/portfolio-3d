@@ -7,6 +7,7 @@ import HoloTable from "./nuremi/HoloTable";
 import ConciergePanel from "./nuremi/ConciergePanel";
 import Totem from "./nuremi/Totem";
 import { ATLAS, makeAtlasPainter } from "./nuremi/pins";
+import Pokeable from "./Pokeable";
 
 /* ── Nuremi: an AI concierge anchored to a live map ──────────────────────────
  * Hero (left column, brought forward): a raked map table whose plate shows
@@ -30,7 +31,9 @@ export default function NuremiRoom({ accent, animate, mobile = false }: { accent
   const atlas = useTextTexture(ATLAS.w, ATLAS.h, useMemo(() => makeAtlasPainter(accent), [accent]));
   return (
     <group>
-      <HoloTable accent={accent} animate={animate} heroAnchor={hero} atlas={atlas} mobile={mobile} />
+      <Pokeable spin={false} hop={0.08}>
+        <HoloTable accent={accent} animate={animate} heroAnchor={hero} atlas={atlas} mobile={mobile} />
+      </Pokeable>
       {!mobile && <ConciergePanel accent={accent} heroAnchor={hero} />}
       {!mobile && <Totem accent={accent} atlas={atlas} />}
     </group>

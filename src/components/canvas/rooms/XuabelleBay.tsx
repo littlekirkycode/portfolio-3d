@@ -8,6 +8,7 @@ import XuabelleRoom from "./XuabelleRoom";
 import { BoutiqueMaterials, cyl, useBoutique, useDisposeAll } from "./xuabelle/kit";
 import { Bench, ColumnVitrine, CounterCase } from "./xuabelle/furniture";
 import { CounterPieces, NeckForm, Riviere, Solitaire } from "./xuabelle/jewels";
+import Pokeable from "./Pokeable";
 
 /** Xuabelle bay — the complete room composition.
  *  A quiet-luxury boutique for the concept storefront. Left column: the hero
@@ -30,13 +31,15 @@ export default function XuabelleBay({ accent, animate, mobile }: BayProps) {
           <ColumnVitrine h={1.0} w={0.6} gw={0.6} gh={0.74} plaque={0} reeded hero>
             <Turntable />
             <group position={[0, 0.016, 0]}>
-              <Sway amp={0.5} period={14} animate={animate}>
-                <RingCushion />
-                {/* 1.25x: the room's first read — ≈0.4 m tall in a 0.74 case */}
-                <group position={[0, 0.056, 0]} scale={1.25}>
-                  <Solitaire />
-                </group>
-              </Sway>
+              <Pokeable hop={0.08}>
+                <Sway amp={0.5} period={14} animate={animate}>
+                  <RingCushion />
+                  {/* 1.25x: the room's first read — ≈0.4 m tall in a 0.74 case */}
+                  <group position={[0, 0.056, 0]} scale={1.25}>
+                    <Solitaire />
+                  </group>
+                </Sway>
+              </Pokeable>
             </group>
           </ColumnVitrine>
         </group>

@@ -5,6 +5,7 @@ import Cmm from "./allied/Cmm";
 import Kit from "./allied/Kit";
 import Report from "./allied/Report";
 import { useAlliedMats } from "./allied/mats";
+import Pokeable from "./Pokeable";
 
 /* ── Allied: product engineering in defence manufacturing ────────────────────
  * Hardware from spec to production, read left → right as one inspection cell:
@@ -54,7 +55,9 @@ export default function AlliedRoom({ accent, animate, mobile = false }: { accent
   }
   return (
     <group>
-      <Cmm m={m} animate={animate} position={[q(-2.95 + 0.34 * k), 0, 1.25]} />
+      <Pokeable spin={false} hop={0.05}>
+        <Cmm m={m} animate={animate} position={[q(-2.95 + 0.34 * k), 0, 1.25]} />
+      </Pokeable>
       <Report accent={accent} m={m} position={[q(-3.1 + 0.5 * k), 2.0, 1.35]} rotY={0.55} wallX={-3.7} />
       <Kit accent={accent} m={m} cases={[q(3.05 - 0.67 * k), q(2.15 - 0.35 * k)]} spares={k < 0.5} />
     </group>

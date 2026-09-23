@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { fxRefs } from "@/lib/scrollStore";
-import { BRIDGE_C } from "../hallConfig";
+import { BRIDGE_C, GALLERY_X } from "../hallConfig";
 
 /* ── the view outside the bridge ─────────────────────────────────────────────
  * Everything here is unlit ShaderMaterial with fog OFF (the hall's exp2 fog
@@ -18,6 +18,10 @@ import { BRIDGE_C } from "../hallConfig";
  *    lit limb + terminator, sparse warm city lights on the night side) with
  *    a back-faced fresnel atmosphere shell.
  *  - Moon: a small cratered grey sphere lit by the same sun.
+ *  - GasGiant: a banded, ringed giant placed in the observation gallery
+ *    view (the gallery glazing looks onto this same sky).
+ *  - OrbitDrift: the planet + moon ease a few degrees back and forth over
+ *    minutes — the ship coasting along its orbit.
  * No motion faster than a slow drift; nothing twinkles.
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -150,7 +154,10 @@ function SkyDome({ octaves }: { octaves: number }) {
     mat.uniforms.uWarp.value = fxRefs.warp;
   });
   return (
-    <mesh material={mat} renderOrder={-100} frustumCulled={false}>
+    // default render order: drawn after the (nearer) opaque hull, so early-z
+    // skips every pixel the walls cover — only what shows through a window
+    // pays for the star/nebula shader
+    <mesh material={mat} frustumCulled={false}>
       <sphereGeometry args={[SKY_R, 64, 32]} />
     </mesh>
   );
@@ -340,6 +347,126 @@ function Moon({ position, radius, octaves }: { position: [number, number, number
   );
 }
 
+/* ── gas giant (seen from the observation gallery) ───────────────────────── */
+
+function GasGiant({ position, radius, animate }: { position: [number, number, number]; radius: number; animate: boolean }) {
+  const body = useMemo(() => {
+    const m = new THREE.ShaderMaterial({
+      defines: { OCTAVES: 4 },
+      uniforms: { uSun: { value: SUN_DIR.clone() }, uTime: { value: 0 }, uDim: { value: 1 } },
+      vertexShader: /* glsl */ `
+        varying vec3 vObj;
+        varying vec3 vN;
+        varying vec3 vV;
+        void main() {
+          vObj = normalize(position);
+          vN = normalize(mat3(modelMatrix) * normal);
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vV = normalize(cameraPosition - wp.xyz);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uSun;
+        uniform float uTime;
+        uniform float uDim;
+        varying vec3 vObj;
+        varying vec3 vN;
+        varying vec3 vV;
+        ${NOISE}
+        void main() {
+          vec3 p = vObj;
+          // latitude bands, warped by slow turbulence
+          float warp = fbm(p * 3.0 + vec3(uTime * 0.01, 0.0, 0.0)) * 0.35;
+          float lat = p.y + warp * 0.25;
+          float b = sin(lat * 18.0) * 0.5 + 0.5;
+          float b2 = sin(lat * 7.0 + 1.3) * 0.5 + 0.5;
+          vec3 cream = vec3(0.78, 0.70, 0.56);
+          vec3 rust = vec3(0.55, 0.33, 0.20);
+          vec3 slate = vec3(0.32, 0.36, 0.42);
+          vec3 col = mix(cream, rust, b * 0.7);
+          col = mix(col, slate, b2 * 0.35);
+          // a storm eye
+          float storm = 1.0 - smoothstep(0.0, 0.12, length(vec2(p.x - 0.35, (p.y + 0.28) * 1.6)));
+          col = mix(col, vec3(0.62, 0.28, 0.18), storm * 0.8);
+          vec3 n = normalize(vN);
+          float ndl = dot(n, uSun);
+          vec3 lit = col * (0.02 + 0.95 * pow(max(ndl, 0.0), 0.75));
+          float rim = pow(1.0 - max(dot(n, normalize(vV)), 0.0), 3.0);
+          lit += vec3(0.9, 0.7, 0.5) * rim * smoothstep(-0.2, 0.5, ndl) * 0.25;
+          gl_FragColor = vec4(lit * uDim, 1.0);
+          #include <colorspace_fragment>
+        }`,
+    });
+    m.toneMapped = false;
+    return m;
+  }, []);
+  const ring = useMemo(() => {
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uDim: { value: 1 } },
+      vertexShader: /* glsl */ `
+        varying float vR;
+        void main() {
+          vR = length(position.xy);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform float uDim;
+        varying float vR;
+        void main() {
+          float r = (vR - ${(radius * 1.35).toFixed(2)}) / ${(radius * 0.9).toFixed(2)};
+          float bands = 0.55 + 0.45 * sin(r * 60.0) * sin(r * 17.0 + 1.0);
+          float edge = smoothstep(0.0, 0.05, r) * smoothstep(1.0, 0.9, r);
+          float gap = 1.0 - 0.85 * (1.0 - smoothstep(0.0, 0.02, abs(r - 0.62)));
+          float a = bands * edge * gap * 0.55;
+          gl_FragColor = vec4(vec3(0.78, 0.72, 0.62) * a * uDim, a);
+          #include <colorspace_fragment>
+        }`,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    m.toneMapped = false;
+    return m;
+  }, [radius]);
+  useEffect(
+    () => () => {
+      body.dispose();
+      ring.dispose();
+    },
+    [body, ring],
+  );
+  useFrame((_, dt) => {
+    if (animate) body.uniforms.uTime.value += Math.min(dt, 1 / 30);
+    const dim = 1 - 0.75 * fxRefs.warp;
+    body.uniforms.uDim.value = dim;
+    ring.uniforms.uDim.value = dim;
+  });
+  return (
+    <group position={position} rotation={[0.25, 0.4, -0.32]}>
+      <mesh material={body}>
+        <sphereGeometry args={[radius, 96, 64]} />
+      </mesh>
+      <mesh material={ring} rotation-x={Math.PI / 2 - 0.08}>
+        <ringGeometry args={[radius * 1.35, radius * 2.25, 160, 1]} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Slow orbital drift: the ship coasting along its orbit, so the planet and
+ *  moon ease a few degrees across the canopy and back over four minutes. */
+function OrbitDrift({ animate, children }: { animate: boolean; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  const t = useRef(0);
+  useFrame((_, dt) => {
+    if (!g.current || !animate) return;
+    t.current += Math.min(dt, 1 / 30);
+    g.current.rotation.y = 0.11 * Math.sin((t.current / 240) * Math.PI * 2);
+    g.current.rotation.x = 0.02 * Math.sin((t.current / 170) * Math.PI * 2);
+  });
+  return <group ref={g}>{children}</group>;
+}
+
 /** The whole outside view, centred on the bridge. Distance-gated: nothing is
  *  drawn until the camera is near the bridge (it's enclosed everywhere else). */
 export default function SpaceView({ mobile = false, animate = true }: { mobile?: boolean; animate?: boolean }) {
@@ -348,16 +475,20 @@ export default function SpaceView({ mobile = false, animate = true }: { mobile?:
   useFrame(({ camera }) => {
     const g = gate.current;
     if (!g) return;
-    const d = BRIDGE_C - camera.position.x;
-    if (g.visible) {
-      if (d > 48) g.visible = false;
-    } else if (d < 45) g.visible = true;
+    // visible near the bridge, and around the observation gallery (whose
+    // glazing looks out onto the same sky)
+    const cx = camera.position.x;
+    g.visible = BRIDGE_C - cx < (g.visible ? 48 : 45) || Math.abs(cx - GALLERY_X) < (g.visible ? 24 : 21);
   });
   return (
     <group ref={gate} position={[BRIDGE_C, 0, 0]}>
       <SkyDome octaves={octaves} />
-      <Planet position={[58, 3, 33]} radius={21} octaves={octaves} animate={animate} />
-      <Moon position={[84, 17, -6]} radius={2.1} octaves={octaves} />
+      <OrbitDrift animate={animate}>
+        <Planet position={[58, 3, 33]} radius={21} octaves={octaves} animate={animate} />
+        <Moon position={[84, 17, -6]} radius={2.1} octaves={octaves} />
+      </OrbitDrift>
+      {/* the gallery view: a ringed gas giant off the starboard side */}
+      <GasGiant position={[GALLERY_X + 12 - BRIDGE_C, 9, 48]} radius={11} animate={animate} />
     </group>
   );
 }

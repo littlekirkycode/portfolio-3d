@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import { useFrame } from "@react-three/fiber";
+import { ARRIVAL, stage } from "./rooms/arrival";
 import * as THREE from "three";
-import { WALL_H, ALCOVE_OPEN_W, ALCOVE_DEPTH, type Room } from "./hallConfig";
+import { WALL_H, ALCOVE_OPEN_W, ALCOVE_DEPTH, ROOMS, type Room } from "./hallConfig";
 import { accentLightShare } from "./theme";
 import {
   makeDiffuserMaterial,
@@ -98,6 +100,34 @@ export function BayArchitecture({ room }: { room: Room }) {
     };
   }, [room.accent]);
   useEffect(() => () => Object.values(mats).forEach((m) => m.dispose()), [mats]);
+
+  // Power-up on arrival (rooms/arrival): the accent coves come on in
+  // sequence — ceiling line + its wash, then the corners, then the base line
+  // — from a dim idle glow, so the bay visibly "wakes" as you settle on it.
+  const idx = ROOMS.indexOf(room);
+  const base = useMemo(
+    () => ({
+      line: mats.line.color.clone(),
+      corner: mats.corner.color.clone(),
+      washTop: mats.washTop.uniforms.uStrength.value as number,
+      washSide: mats.washSide.uniforms.uStrength.value as number,
+      washBase: mats.washBase.uniforms.uStrength.value as number,
+      panel: mats.panel.uniforms.uIntensity.value as number,
+    }),
+    [mats],
+  );
+  useFrame(() => {
+    const v = ARRIVAL[idx];
+    const IDLE = 0.4;
+    const k = (a: number, b: number) => IDLE + (1 - IDLE) * stage(v, a, b);
+    const top = k(0.15, 0.5);
+    mats.line.color.copy(base.line).multiplyScalar(top);
+    mats.washTop.uniforms.uStrength.value = base.washTop * top;
+    mats.washSide.uniforms.uStrength.value = base.washSide * k(0.25, 0.6);
+    mats.corner.color.copy(base.corner).multiplyScalar(k(0.3, 0.7));
+    mats.washBase.uniforms.uStrength.value = base.washBase * k(0.45, 0.85);
+    mats.panel.uniforms.uIntensity.value = base.panel * (0.6 + 0.4 * stage(v, 0.05, 0.35));
+  });
 
   const cz = BACK_Z / 2; // side-wall midpoint
   return (

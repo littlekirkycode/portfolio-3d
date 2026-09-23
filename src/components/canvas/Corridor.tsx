@@ -3,6 +3,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import BridgeRoom from "./bridge/BridgeRoom";
 import SpaceView from "./bridge/SpaceView";
+import ExteriorHull from "./bridge/ExteriorHull";
 import type { GfxQuality } from "@/lib/quality";
 import * as THREE from "three";
 import {
@@ -263,6 +264,7 @@ export default function Corridor({
 
       <BridgeRoom />
       <SpaceView mobile={mobile} animate={animate} />
+      <ExteriorHull />
     </group>
   );
 }

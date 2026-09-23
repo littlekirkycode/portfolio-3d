@@ -4,6 +4,7 @@ import { type BayProps } from "./shared";
 import ExperienceRoom, { LAMP_AT } from "./ExperienceRoom";
 import NowLamp from "./experience/NowLamp";
 import Vitrine from "./experience/Vitrine";
+import Pokeable from "./Pokeable";
 
 /** Experience bay — the complete room composition.
  *  Hero: "The Ascent", a cantilevered walnut stair climbing the left wall —
@@ -22,7 +23,11 @@ export default function ExperienceBay({ accent, animate, mobile }: BayProps) {
           the frame edge (measured at p=0.67, 390×844) — desktop-only */}
       {!mobile && <ExperienceRoom accent={accent} animate={animate} />}
       {!mobile && <NowLamp accent={accent} position={LAMP_AT} />}
-      {!mobile && <Vitrine accent={accent} position={[-0.95, 0, 0.72]} />}
+      {!mobile && (
+        <Pokeable spin={false} hop={0.08}>
+          <Vitrine accent={accent} position={[-0.95, 0, 0.72]} />
+        </Pokeable>
+      )}
     </group>
   );
 }
