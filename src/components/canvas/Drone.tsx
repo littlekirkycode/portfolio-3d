@@ -739,11 +739,15 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
         !reduced && quipKey.current !== null && t.current - quipShownAt.current < QUIP_HOLD;
       // eased fade (rate 8 snapped the bubble in within ~0.3s — a pop)
       quipOp.current = damp(quipOp.current, showing ? 1 : 0, 4.5, dt);
-      const bubOp = quipOp.current * appear;
+      // At an exhibit the quip is an aside, not a headline: smaller and a
+      // touch dimmer so the room's panel leads the hierarchy. Full size in
+      // the corridor, where nothing else is competing.
+      const parkedK = Math.max(ease, gf, ff);
+      const bubOp = quipOp.current * appear * (1 - 0.25 * parkedK);
       bubMat.opacity = bubOp;
       if (tailMatRef.current) tailMatRef.current.opacity = bubOp;
       bub.visible = bubOp > 0.02;
-      const s = 0.85 + 0.15 * quipOp.current;
+      const s = (0.85 + 0.15 * quipOp.current) * (1 - 0.36 * parkedK);
       bub.scale.setScalar(s);
       bub.quaternion.copy(camera.quaternion); // billboard (parent is unrotated)
       bub.position.y = 0.62 + bob * 0.3 - 0.3 * Math.max(ease, gf, ff, bd);

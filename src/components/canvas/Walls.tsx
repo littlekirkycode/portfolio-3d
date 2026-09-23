@@ -15,7 +15,7 @@ import {
   type Room,
 } from "./hallConfig";
 import { RoomScreen } from "./bayScreens";
-import { InfoPanel, TimelinePanel, RoomLabel } from "./bayPanels";
+import { InfoPanel, TimelinePanel } from "./bayPanels";
 import { BayMat } from "./bayFloors";
 import { BayArchitecture, BAY_PANEL } from "./bayLighting";
 import RoomProps from "./RoomProps";
@@ -343,16 +343,9 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
         </Settle>
       </group>
 
-      {/* holographic name label — centred at the top of the bay. Hidden on mobile
-          where the vertical stack needs that height for the raised screen (the
-          title already shows on the screen + info panel). */}
-      {!mobile && (
-        <group position={[0, 3.2, -0.9]}>
-          <Settle idx={ROOMS.indexOf(room)} window={[0.25, 0.7]} lift={0.08} floor={0.55}>
-            <RoomLabel room={room} />
-          </Settle>
-        </group>
-      )}
+      {/* (no floating room-name label: the portal header names the bay from
+          the corridor, and the info panel + dock carry the name at the bay —
+          one title per view, not three) */}
 
       {/* architectural light: ceiling panel, accent coves + washes, corners */}
       <BayArchitecture room={room} />
