@@ -28,17 +28,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/cache@v4
-        with:
-          # See here for caching with `yarn`, `bun` or other package managers https://github.com/actions/cache/blob/main/examples.md or you can leverage caching with actions/setup-node https://github.com/actions/setup-node
-          path: |
-            ~/.npm
-            ${{ github.workspace }}/.next/cache
-          # Generate a new cache whenever packages or source files change.
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-          # If source files changed but packages didn't, rebuild from a prior cache.
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+      # No .next/cache restore: the old key hashed only JS/TS sources, so a
+      # CSS-only change could restore a stale Turbopack cache and ship old
+      # stylesheet output (the live dock rendered unstyled). The build is
+      # ~1 min; a clean one every deploy is the safe trade.
       - run: npm ci
       # Quality gates run on the deployed code path too — ci.yml only covers
       # PRs, and a direct push to master would otherwise skip every check.
