@@ -11,14 +11,11 @@ import {
   ALCOVE_OPEN_W,
   ALCOVE_DEPTH,
   ROOMS,
-  GALLERY_X,
-  GALLERY_SPAN,
-  GALLERY_SIDE,
   focusAt,
   type Room,
 } from "./hallConfig";
 import { RoomScreen } from "./bayScreens";
-import { InfoPanel, TimelinePanel, RoomLabel, BayPlaque } from "./bayPanels";
+import { InfoPanel, TimelinePanel, RoomLabel } from "./bayPanels";
 import { BayMat } from "./bayFloors";
 import { BayArchitecture, BAY_PANEL } from "./bayLighting";
 import RoomProps from "./RoomProps";
@@ -31,35 +28,13 @@ import { accentLight, accentLightShare } from "./theme";
  *    timeline / label / plaque), bayFloors (mats + painted deck art) and
  *    canvas2d (shared canvas-texture helpers). ── */
 
-/* ── glowing accent frame around the bay opening ────────────────────────── */
-
-function OpeningFrame({ accent }: { accent: string }) {
-  const half = ALCOVE_OPEN_W / 2;
-  return (
-    <group>
-      {/* verticals on the corner pillars' opening-facing faces (the pillars
-          are 0.44 square, centred on the opening edges) */}
-      {[-1, 1].map((s) => (
-        <mesh key={s} position={[s * (half - 0.226), WALL_H / 2, 0.17]}>
-          <boxGeometry args={[0.014, WALL_H, 0.06]} />
-          <meshBasicMaterial color={accent} toneMapped={false} />
-        </mesh>
-      ))}
-      <mesh position={[0, WALL_H - 0.05, 0.06]}>
-        <boxGeometry args={[half * 2, 0.09, 0.09]} />
-        <meshBasicMaterial color={accent} toneMapped={false} />
-      </mesh>
-    </group>
-  );
-}
 
 /* ── accent light spill at each bay threshold ─────────────────────────────
  * Colourist fix for "accent colours stop dead at the opening": an additive
  * gradient quad lying flat on the CORRIDOR floor, fading ~4 units into the
- * hall, plus two thin emissive jamb strips on the OUTER edges of the opening
- * frame that catch the eye obliquely from down the corridor. ONE shared
- * falloff texture + shared geometries at module level; only the two small
- * per-accent materials vary per bay. */
+ * hall (the portal jambs' accent lines — hall/Portals — catch the eye from
+ * down the corridor). ONE shared falloff texture + geometry at module level;
+ * only the small per-accent material varies per bay. */
 
 const SPILL_DEPTH = 4;
 
@@ -86,7 +61,6 @@ function getSpillTexture(): THREE.CanvasTexture {
 }
 
 const spillGeometry = /* @__PURE__ */ new THREE.PlaneGeometry(ALCOVE_OPEN_W, SPILL_DEPTH);
-const jambGeometry = /* @__PURE__ */ new THREE.BoxGeometry(0.07, WALL_H - 0.12, 0.012);
 
 function AccentSpill({ accent }: { accent: string }) {
   // floor glow — additive so it reads as light on the deck, not a decal rug
@@ -102,16 +76,6 @@ function AccentSpill({ accent }: { accent: string }) {
       }),
     [accent],
   );
-  // jamb strips — genuine emitters, dimmed so bloom (threshold 0.5) stays tight
-  const jambMat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: new THREE.Color(accent).multiplyScalar(0.75),
-        toneMapped: false,
-      }),
-    [accent],
-  );
-  const half = ALCOVE_OPEN_W / 2;
   return (
     <group>
       <mesh
@@ -120,16 +84,6 @@ function AccentSpill({ accent }: { accent: string }) {
         position={[0, 0.02, SPILL_DEPTH / 2]}
         rotation-x={-Math.PI / 2}
       />
-      {[-1, 1].map((s) => (
-        <mesh
-          key={s}
-          geometry={jambGeometry}
-          material={jambMat}
-          // on the corridor-facing face of each corner pillar (0.22 proud of
-          // the wall line) — the old spot sat INSIDE the pillar box
-          position={[s * half, WALL_H / 2, 0.227]}
-        />
-      ))}
     </group>
   );
 }
@@ -308,8 +262,8 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
   const cfg = BAY_VARIANTS[v];
   const isExp = room.kind === "experience";
 
-  // Distance-gate the bay content (finding 3). The OpeningFrame/AccentSpill
-  // emitters stay OUT of the gated group — they're the corridor-facing
+  // Distance-gate the bay content (finding 3). The AccentSpill floor glow
+  // stays OUT of the gated group — they're the corridor-facing
   // wayfinding you can see from far down the hall — and the bay lights live
   // in <BayLightPool/> (lights must never be visibility-toggled: light-count
   // changes recompile every lit material). Mesh .visible toggling is safe.
@@ -329,7 +283,6 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
 
   return (
     <group position={[room.x, 0, z]} rotation-y={rotY}>
-      <OpeningFrame accent={room.accent} />
       <AccentSpill accent={room.accent} />
 
       <group ref={contentRef}>
@@ -350,25 +303,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
         </mesh>
       ))}
 
-      {/* station plaque on the corridor wall beside the opening — SKIPPED when
-          the spot falls inside the observation-gallery cut: there's no wall
-          there, so the plaque floated over the glazing (QA: "(06) CAPABILITIES
-          going into the window"). Room 5's bay starts flush at the gallery's
-          far edge, so it has no clear wall strip on either side. */}
-      {(() => {
-        const plaqueX =
-          room.side === 1
-            ? room.x - (ALCOVE_OPEN_W / 2 + 0.55)
-            : room.x + (ALCOVE_OPEN_W / 2 + 0.55);
-        const overGallery =
-          room.side === GALLERY_SIDE &&
-          Math.abs(plaqueX - GALLERY_X) < GALLERY_SPAN / 2 + 0.6;
-        return overGallery ? null : (
-          <group position={[ALCOVE_OPEN_W / 2 + 0.55, 2.55, 0.07]}>
-            <BayPlaque room={room} />
-          </group>
-        );
-      })()}
+      {/* the station plaque now lives on the portal header (hall/Portals) */}
 
       {/* DESKTOP: screen left + info panel right, side by side (landscape).
           MOBILE: stack them — screen high & centred, info panel centred below &

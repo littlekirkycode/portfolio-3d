@@ -36,6 +36,11 @@ import { NEUTRAL } from "../theme";
  *    keeps the ceiling-light reflections).
  *  - CABLE TRAYS: a tray with cable runs along each ceiling edge, under the
  *    beams, cut round the blade signs, gates and the open atrium.
+ *  - CREW FITTINGS in the module rhythm: fold-down benches and emergency
+ *    cabinets (glazed door, extinguisher).
+ *  - DECK IDENTITY: per-deck light-strip colour + wall-plate tint, and large
+ *    painted stencils ("DECK 02 · EXHIBITS 04–06 · BRIDGE") on the band
+ *    above the modules.
  *
  * Everything is instanced: one InstancedMesh per (module type × material),
  * so ~20 draws for the whole hall. No lights; the only emitters are small
@@ -52,6 +57,11 @@ const HALL_X1 = BRIDGE_ENTRY_X - 0.2;
 type Side = 1 | -1;
 type Span = [number, number];
 
+/* Each deck (split by the bulkhead gates) gets its own light colour + wall
+ * tint and its own painted stencils: 01 cool blue, 02 violet, 03 warm amber. */
+const DECK_COLORS = ["#8fb4ee", "#a58cf5", "#e6b27a"] as const;
+const deckOf = (x: number): number => GATES.filter((g) => x > g.x).length;
+
 /** Wall cuts per side: bay openings + their plaques, the showreel recess, the
  *  gallery glazing, bulkhead-gate collars and portholes. */
 function wallCuts(side: Side): Span[] {
@@ -67,27 +77,33 @@ function wallCuts(side: Side): Span[] {
 }
 const blocked = (x0: number, x1: number, cuts: Span[]) => cuts.some(([a, b]) => x1 > a && x0 < b);
 
-type ModType = "panel" | "service" | "vent" | "display";
-type Slot = { x: number; side: Side; type: ModType; variant: number };
+type ModType = "panel" | "service" | "vent" | "display" | "bench" | "locker";
+type Slot = { x: number; side: Side; type: ModType; variant: number; deck: number };
 
-/** Module slots on tile-column centres, typed by a fixed rhythm so each run
- *  reads composed rather than random: panels carry the run, a service bay
- *  or vent every few modules, a display roughly every eighth. */
+/** Module slots on tile-column centres, typed by a fixed 10-slot rhythm so
+ *  each run reads composed rather than random: panels carry the run, with a
+ *  service bay, a vent, a display, a fold-down bench and an emergency
+ *  cabinet in every cycle. */
 const SLOTS: Slot[] = (() => {
   const out: Slot[] = [];
   for (const side of [-1, 1] as Side[]) {
     const cuts = wallCuts(side);
-    let k = side === 1 ? 3 : 0;
+    let k = side === 1 ? 5 : 0; // half a cycle out of phase: the walls never mirror
     let displays = side === 1 ? 1 : 0;
     for (let x = WALL_START + TILE / 2; x < HALL_X1; x += TILE) {
       if (x - MOD_W / 2 < HALL_X0 || x + MOD_W / 2 > HALL_X1) continue;
-      if (blocked(x - MOD_W / 2, x + MOD_W / 2, cuts)) {
-        k = 0; // restart the rhythm after every interruption
-        continue;
-      }
-      const m = k % 8;
-      const type: ModType = m === 2 ? "service" : m === 5 ? "vent" : m === 7 ? "display" : "panel";
-      out.push({ x, side, type, variant: type === "display" ? displays++ % 4 : k });
+      // the rhythm carries across bays/gates (runs are short — resetting it
+      // per run meant the later slots in the cycle never came up)
+      if (blocked(x - MOD_W / 2, x + MOD_W / 2, cuts)) continue;
+      const m = k % 10;
+      const type: ModType =
+        m === 2 ? "service"
+        : m === 5 ? "vent"
+        : m === 7 ? "display"
+        : m === 4 ? "bench"
+        : m === 9 ? "locker"
+        : "panel";
+      out.push({ x, side, type, variant: type === "display" ? displays++ % 4 : k, deck: deckOf(x) });
       k++;
     }
   }
@@ -97,7 +113,9 @@ const SLOTS: Slot[] = (() => {
 /* ── module geometry (local: x along the wall, y up, +z out of the wall) ── */
 
 type Part = { geo: THREE.BufferGeometry; mat: MatKey };
-type MatKey = "plate" | "frame" | "panel" | "steel" | "dark" | "led" | "ledWarm" | "pipe" | "strip";
+type MatKey = "plate" | "frame" | "panel" | "steel" | "dark" | "led" | "ledWarm" | "pipe" | "strip" | "seat" | "glass" | "red";
+/** Materials that vary per deck (tint / light colour). */
+const DECK_MATS: MatKey[] = ["plate", "strip"];
 
 const box = (w: number, h: number, d: number, x: number, y: number, z: number, rx = 0) => {
   const g = new THREE.BoxGeometry(w, h, d);
@@ -159,6 +177,37 @@ function buildModule(type: ModType): Part[] {
       box(MOD_W - 0.3, 0.05, 0.08, 0, cy - 0.33, 0.06),
     ]);
     add("steel", box(0.36, 0.08, 0.02, 0, cy - 0.5, 0.05));
+  } else if (type === "bench") {
+    // fold-down crew bench: padded back, seat slab on two brackets
+    add("seat", box(MOD_W - 0.3, 0.5, 0.07, 0, 0.9, 0.07));
+    add("seat", box(MOD_W - 0.3, 0.08, 0.42, 0, 0.47, 0.25));
+    add("steel", box(MOD_W - 0.3, 0.02, 0.02, 0, 0.44, 0.46));
+    for (const bx of [-0.62, 0.62]) add("frame", box(0.05, 0.26, 0.38, bx, 0.3, 0.21));
+    add("frame", box(0.3, 0.06, 0.02, MOD_W / 2 - 0.35, 1.6, 0.045));
+  } else if (type === "locker") {
+    // emergency cabinet: glazed door, extinguisher inside, warm header
+    const lx = -0.3;
+    add("panel", box(0.8, 1.5, 0.26, lx, cy + 0.05, 0.13));
+    add("dark", box(0.66, 1.2, 0.01, lx, cy - 0.02, 0.2));
+    add(
+      "frame",
+      box(0.8, 0.06, 0.04, lx, cy + 0.77, 0.27),
+      box(0.8, 0.06, 0.04, lx, cy - 0.67, 0.27),
+      box(0.06, 1.5, 0.04, lx - 0.37, cy + 0.05, 0.27),
+      box(0.06, 1.5, 0.04, lx + 0.37, cy + 0.05, 0.27),
+    );
+    const ext = new THREE.CylinderGeometry(0.085, 0.085, 0.58, 16);
+    ext.translate(lx, cy - 0.2, 0.13);
+    add("red", ext);
+    const top = new THREE.CylinderGeometry(0.03, 0.05, 0.1, 10);
+    top.translate(lx, cy + 0.14, 0.13);
+    add("dark", top);
+    add("glass", box(0.68, 1.34, 0.01, lx, cy + 0.05, 0.285));
+    add("ledWarm", box(0.5, 0.04, 0.01, lx, cy + 0.69, 0.295));
+    add("steel", box(0.03, 0.22, 0.04, lx + 0.28, cy + 0.05, 0.3));
+    // small service plate beside it
+    add("frame", box(0.46, 0.34, 0.03, 0.45, cy + 0.35, 0.045));
+    add("led", box(0.03, 0.03, 0.012, 0.45, cy + 0.35, 0.062));
   } else {
     // display bay: bezel + (screen drawn separately) + keypad greebles
     add("panel", box(1.36, 0.84, 0.06, 0, cy + 0.3, 0.05));
@@ -304,14 +353,15 @@ function Instanced({ geo, mat, mats }: { geo: THREE.BufferGeometry; mat: THREE.M
 
 /* ── wall modules ────────────────────────────────────────────────────────── */
 
-function WallModules({ mats }: { mats: Record<MatKey, THREE.Material> }) {
+function WallModules({ mats }: { mats: Record<string, THREE.Material> }) {
   const screens = useStatusTextures();
   const batches = useMemo(() => {
-    const out: { key: string; geo: THREE.BufferGeometry; mat: MatKey; mats: THREE.Matrix4[] }[] = [];
-    for (const type of ["panel", "service", "vent", "display"] as ModType[]) {
+    const out: { key: string; geo: THREE.BufferGeometry; mat: string; mats: THREE.Matrix4[] }[] = [];
+    for (const type of ["panel", "service", "vent", "display", "bench", "locker"] as ModType[]) {
       const slots = SLOTS.filter((s) => s.type === type);
       if (!slots.length) continue;
       const matrices = slots.map((s) => slotMatrix(s.x, s.side, new THREE.Matrix4()));
+      const byDeck = [0, 1, 2].map((d) => slots.flatMap((s, i) => (s.deck === d ? [matrices[i]] : [])));
       const parts = buildModule(type);
       const byMat = new Map<MatKey, THREE.BufferGeometry[]>();
       for (const p of parts) {
@@ -321,7 +371,14 @@ function WallModules({ mats }: { mats: Record<MatKey, THREE.Material> }) {
       }
       for (const [mat, geos] of byMat) {
         const merged = mergeGeometries(geos, false);
-        if (merged) out.push({ key: `${type}-${mat}`, geo: merged, mat, mats: matrices });
+        if (!merged) continue;
+        if (DECK_MATS.includes(mat)) {
+          byDeck.forEach((ms, d) => {
+            if (ms.length) out.push({ key: `${type}-${mat}-${d}`, geo: merged, mat: `${mat}${d}`, mats: ms });
+          });
+        } else {
+          out.push({ key: `${type}-${mat}`, geo: merged, mat, mats: matrices });
+        }
       }
     }
     return out;
@@ -404,7 +461,7 @@ function FloorGrates() {
   const matrices = useMemo(() => {
     const out: THREE.Matrix4[] = [];
     for (const side of [-1, 1] as Side[]) {
-      const cuts: Span[] = ROOMS.filter((r) => r.side === side).map((r) => [r.x - ALCOVE_OPEN_W / 2, r.x + ALCOVE_OPEN_W / 2]);
+      const cuts: Span[] = ROOMS.filter((r) => r.side === side).map((r) => [r.x - ALCOVE_OPEN_W / 2 - 0.9, r.x + ALCOVE_OPEN_W / 2 + 0.9]);
       for (const g of GATES) cuts.push([g.x - 0.5, g.x + 0.5]);
       for (let x = WALL_START + TILE / 2; x < HALL_X1; x += TILE) {
         if (x - TILE / 2 < HALL_X0 - 1 || blocked(x - TILE / 2, x + TILE / 2, cuts)) continue;
@@ -421,7 +478,7 @@ function FloorGrates() {
 const TRAY_Y = 3.5;
 const TRAY_Z = HALF_W - 0.62;
 
-function CableTrays({ mats }: { mats: Record<MatKey, THREE.Material> }) {
+function CableTrays({ mats }: { mats: Record<string, THREE.Material> }) {
   const segs = useMemo(() => {
     // blade signs hang ~5.2 m before each bay (Wayfinding), gates, atrium
     const cuts: Span[] = [];
@@ -488,12 +545,131 @@ function CableTrays({ mats }: { mats: Record<MatKey, THREE.Material> }) {
   );
 }
 
+/* ── deck stencils ───────────────────────────────────────────────────────── */
+
+const STENCIL_W = 2.5;
+const STENCIL_H = STENCIL_W * (256 / 1024);
+
+/** Exhibit index range painted on each deck ("EXHIBITS 04–06"). */
+const DECK_RANGE = [0, 1, 2].map((d) => {
+  const idx = ROOMS.filter((r) => deckOf(r.x) === d).map((r) => r.index);
+  return idx.length ? `EXHIBITS ${idx[0]}–${idx[idx.length - 1]}` : "";
+});
+
+function paintStencil(ctx: CanvasRenderingContext2D, deck: number, arrowLeft: boolean) {
+  const mono = familyVar("--ff-mono", "ui-monospace, monospace");
+  const c = DECK_COLORS[deck];
+  ctx.clearRect(0, 0, 1024, 256);
+  ctx.fillStyle = c;
+  ctx.strokeStyle = c;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  const x0 = arrowLeft ? 150 : 24;
+  ctx.globalAlpha = 0.78;
+  ctx.font = `700 118px ${mono}`;
+  ctx.fillText(`DECK 0${deck + 1}`, x0, 104);
+  ctx.globalAlpha = 0.55;
+  ctx.fillRect(x0, 178, 840, 5);
+  ctx.font = `600 38px ${mono}`;
+  ctx.fillText(`${DECK_RANGE[deck]}   ·   BRIDGE`, x0, 222);
+  // arrow toward the bridge (+x): points right on the −z wall, left on +z
+  ctx.globalAlpha = 0.78;
+  ctx.lineWidth = 16;
+  ctx.beginPath();
+  if (arrowLeft) {
+    ctx.moveTo(110, 60);
+    ctx.lineTo(40, 128);
+    ctx.lineTo(110, 196);
+  } else {
+    ctx.moveTo(912, 60);
+    ctx.lineTo(982, 128);
+    ctx.lineTo(912, 196);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function DeckStencils() {
+  const texs = useMemo(
+    () =>
+      [0, 1, 2].flatMap((d) =>
+        [false, true].map((left) => {
+          const c = document.createElement("canvas");
+          c.width = 1024;
+          c.height = 256;
+          const t = new THREE.CanvasTexture(c);
+          t.colorSpace = THREE.SRGBColorSpace;
+          t.anisotropy = 8;
+          return { c, t, d, left };
+        }),
+      ),
+    [],
+  );
+  useEffect(() => {
+    const draw = () =>
+      texs.forEach(({ c, t, d, left }) => {
+        paintStencil(c.getContext("2d")!, d, left);
+        t.needsUpdate = true;
+      });
+    draw();
+    let cancelled = false;
+    document.fonts?.ready.then(() => !cancelled && draw()).catch(() => {});
+    return () => {
+      cancelled = true;
+      texs.forEach(({ t }) => t.dispose());
+    };
+  }, [texs]);
+  const mats = useMemo(
+    () => texs.map(({ t }) => new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false })),
+    [texs],
+  );
+  useEffect(() => () => mats.forEach((m) => m.dispose()), [mats]);
+  // every ~9th panel slot per side, at least 14 m apart
+  const spots = useMemo(() => {
+    const out: { x: number; side: Side; deck: number }[] = [];
+    for (const side of [-1, 1] as Side[]) {
+      let n = side === 1 ? 4 : 1;
+      let lastX = -Infinity;
+      for (const s of SLOTS) {
+        if (s.side !== side || s.type !== "panel") continue;
+        n++;
+        if (n % 9 !== 0 || s.x - lastX < 14) continue;
+        out.push({ x: s.x, side, deck: s.deck });
+        lastX = s.x;
+      }
+    }
+    return out;
+  }, []);
+  return (
+    <group>
+      {spots.map((sp, i) => (
+        <mesh
+          key={i}
+          position={[sp.x, 2.74, sp.side * (HALF_W - 0.03)]}
+          rotation-y={sp.side < 0 ? 0 : Math.PI}
+          material={mats[sp.deck * 2 + (sp.side > 0 ? 1 : 0)]}
+        >
+          <planeGeometry args={[STENCIL_W, STENCIL_H]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 /* ── the layer ───────────────────────────────────────────────────────────── */
 
 export default function HallDressing() {
-  const mats = useMemo<Record<MatKey, THREE.Material>>(
+  const mats = useMemo<Record<string, THREE.Material>>(
     () => ({
-      plate: new THREE.MeshStandardMaterial({ color: "#283042", roughness: 0.58, metalness: 0.3 }),
+      ...Object.fromEntries(
+        DECK_COLORS.flatMap((c, d) => [
+          [`plate${d}`, new THREE.MeshStandardMaterial({ color: new THREE.Color("#283042").lerp(new THREE.Color(c), 0.07), roughness: 0.58, metalness: 0.3 })],
+          [`strip${d}`, new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(0.62), toneMapped: false })],
+        ]),
+      ),
+      seat: new THREE.MeshStandardMaterial({ color: "#2b303d", roughness: 0.66, metalness: 0.08 }),
+      glass: new THREE.MeshStandardMaterial({ color: "#cfd8ff", roughness: 0.05, metalness: 0.9, transparent: true, opacity: 0.16, depthWrite: false }),
+      red: new THREE.MeshStandardMaterial({ color: "#b0402c", roughness: 0.4, metalness: 0.3 }),
       frame: new THREE.MeshStandardMaterial({ color: "#4f5a70", roughness: 0.34, metalness: 0.7 }),
       panel: new THREE.MeshStandardMaterial({ color: "#4a556f", roughness: 0.46, metalness: 0.3 }),
       steel: new THREE.MeshStandardMaterial({ color: NEUTRAL.steel, roughness: 0.32, metalness: 0.85 }),
@@ -501,7 +677,6 @@ export default function HallDressing() {
       pipe: new THREE.MeshStandardMaterial({ color: "#5a6478", roughness: 0.3, metalness: 0.85 }),
       led: new THREE.MeshBasicMaterial({ color: new THREE.Color("#6fe0a8").multiplyScalar(0.9), toneMapped: false }),
       ledWarm: new THREE.MeshBasicMaterial({ color: new THREE.Color("#ffb070").multiplyScalar(0.7), toneMapped: false }),
-      strip: new THREE.MeshBasicMaterial({ color: new THREE.Color("#8fb4ee").multiplyScalar(0.62), toneMapped: false }),
     }),
     [],
   );
@@ -511,6 +686,7 @@ export default function HallDressing() {
       <WallModules mats={mats} />
       <FloorGrates />
       <CableTrays mats={mats} />
+      <DeckStencils />
     </group>
   );
 }

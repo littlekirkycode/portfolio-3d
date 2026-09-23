@@ -27,6 +27,7 @@ import {
 } from "./corridorFx";
 import Wayfinding from "./rooms/Wayfinding";
 import HallDressing from "./hall/HallDressing";
+import Portals from "./hall/Portals";
 
 /** Ceiling light fixture X positions (warm point lights for real illumination). */
 const FIXTURES = [10, 40, 70, 100, 130, 158];
@@ -181,8 +182,8 @@ function SkirtingStrips() {
     const out: { x0: number; x1: number; side: -1 | 1 }[] = [];
     for (const side of [-1, 1] as const) {
       const cuts: [number, number][] = ROOMS.filter((r) => r.side === side).map((r) => [
-        r.x - (ALCOVE_OPEN_W / 2 + 0.4),
-        r.x + (ALCOVE_OPEN_W / 2 + 0.4),
+        r.x - (ALCOVE_OPEN_W / 2 + 0.9),
+        r.x + (ALCOVE_OPEN_W / 2 + 0.9),
       ]);
       if (side === 1) cuts.push([FEATURE_X - 3.5, FEATURE_X + 3.5]);
       if (side === GALLERY_SIDE) cuts.push([GALLERY_X - GALLERY_SPAN / 2 - 0.6, GALLERY_X + GALLERY_SPAN / 2 + 0.6]);
@@ -240,6 +241,7 @@ export default function Corridor({
       {!mobile && quality === "high" && <FloorReflection />}
       <WallRibs />
       <HallDressing />
+      <Portals />
       <Wayfinding />
       <FloorWashes />
       <SkirtingStrips />

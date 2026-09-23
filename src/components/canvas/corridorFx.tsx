@@ -478,8 +478,8 @@ function coveRuns(): Run[] {
   const out: Run[] = [];
   for (const side of [-1, 1] as const) {
     const cuts: [number, number][] = ROOMS.filter((r) => r.side === side).map((r) => [
-      r.x - (ALCOVE_OPEN_W / 2 + 0.3),
-      r.x + (ALCOVE_OPEN_W / 2 + 0.3),
+      r.x - (ALCOVE_OPEN_W / 2 + 0.9),
+      r.x + (ALCOVE_OPEN_W / 2 + 0.9),
     ]);
     if (side === 1) cuts.push([FEATURE_X - 3.3, FEATURE_X + 3.3]);
     if (side === GALLERY_SIDE) cuts.push([GALLERY_X - GALLERY_SPAN / 2 - 0.3, GALLERY_X + GALLERY_SPAN / 2 + 0.3]);
