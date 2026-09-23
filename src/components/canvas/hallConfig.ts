@@ -110,10 +110,20 @@ const slotStart = (i: number) => ROOM_LO + i * SLOT;
 const roomSlot = (i: number) => (i < GALLERY_SLOT ? i : i + 1);
 
 export const START_X = ROOMS[0].x - 20;
-/** Camera x at p=1: ~9 m short of the bridge canopy (END_VISUAL_X + 8), close
- *  enough that the canopy fills the frame instead of reading as a small
- *  window at the end of a corridor (was +26, ~12 m back). */
-const END_X = ROOMS[ROOMS.length - 1].x + 29;
+/* ── the bridge (ship's front) ─────────────────────────────────────────────
+ * The corridor opens at BRIDGE_ENTRY_X (a wall-tile column edge) into an open
+ * bridge room: straight side walls at z = ±BRIDGE_R out to BRIDGE_C, then a
+ * semicircular panoramic window of radius BRIDGE_R around (BRIDGE_C, 0).
+ * KitShell / corridor dressing stop at the entry; bridge/BridgeRoom builds
+ * the room and bridge/SpaceView the view outside. */
+export const BRIDGE_ENTRY_X = ROOMS[ROOMS.length - 1].x + 28;
+export const BRIDGE_R = 9;
+export const BRIDGE_C = BRIDGE_ENTRY_X + 11;
+export const BRIDGE_H = 6.4;
+
+/** Camera x at p=1: a couple of metres inside the bridge, behind the
+ *  captain's chair, with the whole window arc in frame. */
+const END_X = BRIDGE_ENTRY_X + 2.5;
 
 // Showreel feature screen in the entrance lobby, on the +Z (right) wall. The
 // camera dwells DIRECTLY OPPOSITE it and turns fully sideways to face it — same

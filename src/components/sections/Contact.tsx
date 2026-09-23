@@ -11,7 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import { gsap } from "@/lib/gsap";
 import { SITE } from "@/lib/constants";
-import { fxRefs } from "@/lib/scrollStore";
+import { fxRefs, scrollRefs } from "@/lib/scrollStore";
 import { playWarpRiser } from "@/lib/useShipAudio";
 import { useReducedMotion } from "@/lib/useReducedMotion";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -107,6 +107,43 @@ export default function Contact() {
     quick.current?.y(0);
   };
 
+  /* ── arrival fade (desktop) ──────────────────────────────────────────
+   * On desktop this panel rides the horizontal track in from the right,
+   * which dragged the copy across the bridge consoles on the way. The copy
+   * is now pinned at its final spot (counter-translated against the track),
+   * stays invisible until the camera has all but arrived, then fades up in
+   * place — driven by scroll progress (not time), so it scrubs both ways. */
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const root = sectionRef.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLElement>("[data-bridge-fade]"));
+    const mq = window.matchMedia("(min-width: 768px) and (pointer: fine)");
+    let raf = 0;
+    let last = -1;
+    let lastDx = -1;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const p = scrollRefs.progress;
+      const desk = mq.matches;
+      const t = desk ? Math.min(1, Math.max(0, (p - 0.955) / 0.035)) : 1;
+      const o = t * t * (3 - 2 * t);
+      // pin the copy at its final spot while the track is still sliding the
+      // section in (desktop): cancel the section's own x offset
+      const dx = desk ? Math.max(0, root.getBoundingClientRect().left) : 0;
+      if (Math.abs(o - last) < 0.002 && Math.abs(dx - lastDx) < 0.5) return;
+      last = o;
+      lastDx = dx;
+      for (const el of els) {
+        el.style.opacity = String(o);
+        el.style.transform = `translate(${-dx}px, ${(1 - o) * 14}px)`;
+        el.style.pointerEvents = o < 0.5 ? "none" : "";
+      }
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   /* ── DEPART sequence ─────────────────────────────────────────────────── */
   const flashRef = useRef<HTMLDivElement>(null);
   const departing = useRef(false);
@@ -187,6 +224,7 @@ export default function Contact() {
        clears the fixed nav, pb clears the absolute footer rail, and the
        heading/gaps scale with vh so the flow column always fits between them. */
     <section
+      ref={sectionRef}
       data-section
       data-label="Contact"
       id="contact"
@@ -200,16 +238,17 @@ export default function Contact() {
           without a visible card edge. */}
       <span
         aria-hidden
+        data-bridge-fade
         className="pointer-events-none absolute inset-y-0 left-0 -z-10 w-full desktop:w-[62%]"
         style={{
           background:
             "radial-gradient(120% 70% at 0% 55%, rgb(7 7 10 / 0.62) 0%, rgb(7 7 10 / 0.35) 45%, transparent 75%)",
         }}
       />
-      {/* Comms panel: kicker → statement → pitch → proof → controls. One
+      {/* Comms panel: kicker → statement → pitch → controls. One
           left column, clear of the bridge consoles (the desktop camera slides
           the bridge into the right two-thirds — see Rig bridgeShift). */}
-      <div className="flex flex-col gap-5 desktop:gap-[2.6vh]">
+      <div data-bridge-fade className="flex flex-col gap-5 desktop:gap-[3vh]">
         <span className="ui-kicker ui-kicker--dash text-[color:var(--ui-ink-2)]">Comms · open channel</span>
 
         <h2 className="font-display leading-[0.82] tracking-[-0.02em] text-ink">
@@ -241,19 +280,9 @@ export default function Contact() {
           {SITE.tagline.replace(/-/g, "‑")}
         </p>
 
-        {/* proof strip — the same numbers as the hero manifest. Desktop only:
-            on phones the column already stacks over the consoles. */}
-        <ul className="hidden max-w-[400px] flex-wrap gap-x-5 gap-y-2 desktop:flex" aria-label="Highlights">
-          {SITE.stats.map((st) => (
-            <li key={st.label} className="flex items-baseline gap-2">
-              <span className="font-display text-[26px] leading-none text-ink">{st.value}</span>
-              <span className="ui-label text-[color:var(--ui-ink-3)]">{st.label}</span>
-            </li>
-          ))}
-        </ul>
       </div>
 
-      <div className="flex w-full flex-col gap-3 desktop:w-fit desktop:gap-[1.6vh]">
+      <div data-bridge-fade className="flex w-full flex-col gap-3 desktop:w-fit desktop:gap-[1.6vh]">
         {/* primary: magnetic email pill + copy */}
         <div className="flex w-full gap-2">
           <a

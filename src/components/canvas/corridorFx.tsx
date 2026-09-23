@@ -9,7 +9,7 @@ import {
   HALF_W,
   WALL_H,
   WALL_START,
-  END_VISUAL_X,
+  BRIDGE_ENTRY_X,
   ROOMS,
   ALCOVE_OPEN_W,
   FEATURE_X,
@@ -41,8 +41,8 @@ import {
  *    of the lit kit floor so emitters mirror in the floor.
  * ──────────────────────────────────────────────────────────────────────── */
 
-/** Must match Corridor's END_X (bridge canopy plane). */
-const END_X = END_VISUAL_X + 8;
+/** Corridor effects stop at the bridge mouth. */
+const END_X = BRIDGE_ENTRY_X;
 /** Wall ribs sit at WALL_START + 2 + 4k (Corridor's WallRibs); beams share
  *  that grid and fixtures sit halfway between. */
 const RIB_X0 = WALL_START + 2;

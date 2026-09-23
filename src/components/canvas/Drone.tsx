@@ -19,6 +19,7 @@ import {
   FEATURE_X,
   BRIDGE_ENTER_P,
   ROOMS,
+  BRIDGE_C,
 } from "./hallConfig";
 import { familyVar } from "./canvas2d";
 import { withBase } from "@/lib/asset";
@@ -554,10 +555,10 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       // bridge window — the DOM contact block ("Let's talk" + email) now owns
       // the left half, and the port dock put the escort and its quip bubble
       // right on top of the email button
-      tx = followX + (167.5 - followX) * bd;
-      tz = 2.3 * bd;
+      tx = followX + (BRIDGE_C - 1.2 - followX) * bd;
+      tz = 3.4 * bd;
       // high enough that the quip bubble clears the LINKEDIN kiosk's head
-      ty = HOVER_Y + bob + 0.05 * bd;
+      ty = HOVER_Y + bob + 0.55 * bd;
     }
 
     // reduced-motion 5th-poke payoff: a modest hop instead of the barrel roll

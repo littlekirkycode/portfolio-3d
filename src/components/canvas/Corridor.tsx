@@ -1,18 +1,16 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef } from "react";
+import BridgeRoom from "./bridge/BridgeRoom";
+import SpaceView from "./bridge/SpaceView";
 import type { GfxQuality } from "@/lib/quality";
 import * as THREE from "three";
-import { useFrame, useThree } from "@react-three/fiber";
-import { SITE } from "@/lib/constants";
-import { fxRefs } from "@/lib/scrollStore";
-import { damp } from "@/lib/math";
 import {
   HALF_W,
   WALL_H,
-  END_VISUAL_X,
   WALL_START,
-  WALL_END,
+  BRIDGE_ENTRY_X,
+  BRIDGE_C,
   ROOMS,
   ALCOVE_OPEN_W,
   FEATURE_X,
@@ -20,7 +18,6 @@ import {
   GALLERY_SPAN,
   GALLERY_SIDE,
 } from "./hallConfig";
-import { starVertex, starFragment, makeStarUniforms, updateStarUniforms } from "./Windows";
 import {
   CeilingFixtures,
   AtriumLights,
@@ -33,7 +30,8 @@ import Wayfinding from "./rooms/Wayfinding";
 /** Ceiling light fixture X positions (warm point lights for real illumination). */
 const FIXTURES = [10, 40, 70, 100, 130, 158];
 
-const END_X = END_VISUAL_X + 8;
+/** Corridor dressing stops at the bridge mouth (the room takes over). */
+const HALL_END = BRIDGE_ENTRY_X;
 
 /**
  * The corridor's real lights — warm low fixtures + the bridge's starlight
@@ -49,406 +47,9 @@ export function CorridorLights() {
       {FIXTURES.map((x) => (
         <pointLight key={x} position={[x, 2.3, 0]} color="#fff0dc" intensity={10} distance={18} decay={2} />
       ))}
-      {/* cool spill back toward the camera (starlight through the bridge glass) */}
-      <pointLight position={[END_X - 2.6, 1.8, 0]} color="#bcd4ff" intensity={26} distance={28} decay={2} />
+      {/* the bridge's one light: high over the command circle, cool */}
+      <pointLight position={[BRIDGE_C - 1.5, 4.6, 0]} color="#cfdcff" intensity={55} distance={26} decay={2} />
     </>
-  );
-}
-
-/* ── bridge finale ──────────────────────────────────────────────────────── */
-
-const PANEL_CTR_W = 3.4;
-const PANEL_SIDE_W = 2.5;
-const PANEL_YAW = 0.35; // ~20° — outer panes rake toward the camera (bridge silhouette)
-
-/** Console pip strip — a row of tiny multicoloured indicator lights baked into
- *  one small CanvasTexture; a slow 6s opacity breathe (no per-frame alloc). */
-function usePipsTexture(): THREE.CanvasTexture {
-  return useMemo(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = 28;
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.clearRect(0, 0, 1024, 28);
-      const cols = ["#7fb0e8", "#ffb07a", "#5a6d96", "#ff5c38", "#9ec4f0"];
-      let seed = 7;
-      const rnd = () => {
-        seed = (seed * 16807) % 2147483647;
-        return seed / 2147483647;
-      };
-      for (let x = 10; x < 1014; x += 16) {
-        if (rnd() < 0.28) continue; // dead pip — consoles read as worked panels
-        ctx.fillStyle = cols[Math.floor(rnd() * cols.length)];
-        ctx.globalAlpha = 0.35 + rnd() * 0.65;
-        ctx.fillRect(x, 10, rnd() < 0.22 ? 9 : 5, 8);
-      }
-      ctx.globalAlpha = 1;
-    }
-    tex.needsUpdate = true;
-    return tex;
-  }, []);
-}
-
-const CONSOLES = [
-  { z: -2.4, h: 0.95 },
-  { z: -1.2, h: 1.1 },
-  { z: 0, h: 0.9 },
-  { z: 1.2, h: 1.06 },
-  { z: 2.4, h: 0.86 },
-];
-
-/* ── diegetic social terminals on the bridge console row ──────────────────
-   GitHub / LinkedIn as PHYSICAL console kiosks — THE canonical links (the DOM
-   list is sr-only for assistive tech). Standing pedestal + raked screen with
-   a slow-breathing prompt cursor; hover eases scale/brightness up and hands the DOM
-   cursor a "world-hover" event so the custom cursor reacts like it does over
-   [data-cursor] elements. Clicks reach the canvas via the body eventSource
-   (see Scene) — the canvas layer itself stays pointer-events:none. */
-
-const TERM_W = 1.5; // screen plane width (world units)
-const TERM_H = TERM_W * (288 / 512); // matches the texture aspect
-
-function setWorldHover(v: boolean) {
-  window.dispatchEvent(new CustomEvent("world-hover", { detail: v }));
-}
-
-/** Terminal screen texture. Also returns the UV spot right after the prompt
- *  text where the breathing cursor block mesh should sit. */
-function makeTerminalTexture(
-  label: string,
-  header: string,
-  prompt: string,
-): {
-  tex: THREE.CanvasTexture;
-  cursorU: number;
-  cursorV: number;
-} {
-  // painted in 512×288 layout units on a 2× backing store — the camera now
-  // parks close enough that the old 1× screens read soft
-  const c = document.createElement("canvas");
-  c.width = 1024;
-  c.height = 576;
-  const ctx = c.getContext("2d")!;
-  ctx.scale(2, 2);
-  const mono =
-    typeof window !== "undefined"
-      ? getComputedStyle(document.documentElement).getPropertyValue("--ff-mono").trim() ||
-        "ui-monospace, monospace"
-      : "ui-monospace, monospace";
-  ctx.fillStyle = "#090d17";
-  ctx.fillRect(0, 0, 512, 288);
-  ctx.strokeStyle = "rgba(127,176,232,0.55)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(6, 6, 500, 276);
-  // corner ticks (brighter than the frame)
-  ctx.strokeStyle = "#7fb0e8";
-  for (const [tx, ty, sx, sy] of [[22, 22, 1, 1], [490, 22, -1, 1], [22, 266, 1, -1], [490, 266, -1, -1]] as const) {
-    ctx.beginPath();
-    ctx.moveTo(tx + sx * 16, ty);
-    ctx.lineTo(tx, ty);
-    ctx.lineTo(tx, ty + sy * 16);
-    ctx.stroke();
-  }
-  // header row: channel id left, live lamp right
-  ctx.textBaseline = "middle";
-  ctx.font = `500 22px ${mono}`;
-  ctx.textAlign = "left";
-  ctx.fillStyle = "rgba(127,176,232,0.8)";
-  ctx.fillText(header, 34, 44);
-  ctx.textAlign = "right";
-  ctx.fillStyle = "#37ff8a";
-  ctx.fillText("● LIVE", 478, 44);
-  // big label
-  ctx.textAlign = "center";
-  ctx.font = `700 64px ${mono}`;
-  ctx.fillStyle = "#f4f1ea";
-  ctx.fillText(`${label} ↗`, 256, 140);
-  // divider + prompt line (cursor block is a separate breathing mesh)
-  ctx.strokeStyle = "rgba(127,176,232,0.25)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(32, 196);
-  ctx.lineTo(480, 196);
-  ctx.stroke();
-  ctx.textAlign = "left";
-  ctx.font = `500 26px ${mono}`;
-  ctx.fillStyle = "rgba(244,241,234,0.85)";
-  ctx.fillText(prompt, 40, 238);
-  const promptW = ctx.measureText(prompt).width;
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 16;
-  return { tex, cursorU: (40 + promptW + 16) / 512, cursorV: 238 / 288 };
-}
-
-function SocialTerminal({
-  label,
-  z,
-  yaw,
-  phase,
-  header = "COMMS UPLINK — EXT",
-  prompt = "> OPEN CHANNEL",
-  x = END_X - 2.5,
-  baseHeadY = 1.36,
-  activate,
-}: {
-  label: string;
-  z: number;
-  yaw: number;
-  phase: number;
-  header?: string;
-  prompt?: string;
-  x?: number;
-  baseHeadY?: number;
-  activate: () => void;
-}) {
-  const { tex, cursorU, cursorV } = useMemo(
-    () => makeTerminalTexture(label, header, prompt),
-    [label, header, prompt],
-  );
-  // Portrait: raise the heads a step, into the clear band between the
-  // "Let's talk." heading and the email button (taps land either way:
-  // events raycast through the DOM). +0.5 put them INTO the heading.
-  const portrait = useThree((s) => s.size.height > s.size.width);
-  const headY = baseHeadY + (portrait ? 0.35 : 0);
-  const grpRef = useRef<THREE.Group>(null);
-  const screenMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const stripMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const curMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const hovered = useRef(false);
-  const hoverT = useRef(0);
-  const t = useRef(phase);
-
-  useFrame((_, rawDt) => {
-    const dt = Math.min(rawDt, 1 / 30);
-    t.current += dt;
-    hoverT.current = damp(hoverT.current, hovered.current ? 1 : 0, 10, dt);
-    const k = hoverT.current;
-    if (grpRef.current) grpRef.current.scale.setScalar(1 + 0.04 * k);
-    if (screenMatRef.current) screenMatRef.current.color.setScalar(1 + 0.35 * k);
-    if (stripMatRef.current) stripMatRef.current.opacity = 0.5 + 0.5 * k;
-    // Slow eased breathe (4s cosine, 0.35↔0.9) instead of the old 1.2s
-    // hard-step blink — nothing on the ship blinks faster than a 3s eased
-    // cycle. Hover pins it solid.
-    if (curMatRef.current) {
-      const breathe = 0.625 - 0.275 * Math.cos((t.current / 4) * Math.PI * 2);
-      curMatRef.current.opacity = breathe + (0.95 - breathe) * k;
-    }
-  });
-
-  return (
-    <group ref={grpRef} position={[x, 0, z]} rotation-y={-Math.PI / 2 + yaw}>
-      {/* base plate + pedestal column (column reaches the head's underside) */}
-      <mesh position={[0, 0.03, -0.12]}>
-        <boxGeometry args={[0.62, 0.06, 0.5]} />
-        <meshStandardMaterial color="#1f2533" roughness={0.45} metalness={0.6} />
-      </mesh>
-      <mesh position={[0, (headY - 0.41) / 2 + 0.06, -0.12]}>
-        <boxGeometry args={[0.42, headY - 0.41, 0.3]} />
-        <meshStandardMaterial color="#2a3142" roughness={0.4} metalness={0.65} />
-      </mesh>
-
-      {/* head — raked back ~7° like a lectern console */}
-      <group position={[0, headY, 0]} rotation-x={-0.12}>
-        <mesh position={[0, 0, -0.06]}>
-          <boxGeometry args={[TERM_W + 0.18, TERM_H + 0.16, 0.1]} />
-          <meshStandardMaterial color="#303849" roughness={0.38} metalness={0.7} />
-        </mesh>
-        <mesh
-          position={[0, 0, 0.001]}
-          onClick={(e) => {
-            e.stopPropagation();
-            activate();
-          }}
-          onPointerOver={(e) => {
-            e.stopPropagation();
-            hovered.current = true;
-            document.body.style.cursor = "pointer";
-            setWorldHover(true);
-          }}
-          onPointerOut={() => {
-            hovered.current = false;
-            document.body.style.cursor = "";
-            setWorldHover(false);
-          }}
-        >
-          <planeGeometry args={[TERM_W, TERM_H]} />
-          <meshBasicMaterial ref={screenMatRef} map={tex} toneMapped={false} />
-        </mesh>
-        {/* breathing prompt cursor, positioned right after the "> OPEN CHANNEL" text */}
-        <mesh position={[(cursorU - 0.5) * TERM_W, (0.5 - cursorV) * TERM_H, 0.006]}>
-          <planeGeometry args={[0.05, 0.1]} />
-          <meshBasicMaterial ref={curMatRef} color="#7fb0e8" transparent toneMapped={false} />
-        </mesh>
-        {/* accent strip under the screen — brightens on hover */}
-        <mesh position={[0, -(TERM_H / 2 + 0.115), 0]}>
-          <boxGeometry args={[TERM_W + 0.18, 0.045, 0.05]} />
-          <meshBasicMaterial ref={stripMatRef} color="#7fb0e8" transparent opacity={0.5} toneMapped={false} />
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
-/** The payoff at the end of the hall: a three-pane observation bridge (outer
- *  panes yawed outward — classic bridge silhouette) running the local star
- *  shader, with a low console row for foreground depth. fxRefs.warp (the DOM
- *  DEPART control) drives the panes' hyperspace streak via uWarp. */
-function Bridge() {
-  const uni = useMemo(() => makeStarUniforms(0, 0), []);
-  const starMat = useMemo(() => {
-    const m = new THREE.ShaderMaterial({
-      vertexShader: starVertex,
-      fragmentShader: starFragment,
-      uniforms: uni,
-    });
-    m.toneMapped = false;
-    return m;
-  }, [uni]);
-  // One shared material across all three panes; each pane's geometry remaps
-  // uv.x to its band of the composite canopy so the starfield reads as ONE
-  // continuous sky wrapping around the bridge (not three tiled copies).
-  const geoms = useMemo(() => {
-    const total = PANEL_CTR_W + 2 * PANEL_SIDE_W;
-    const a = PANEL_SIDE_W / total;
-    const mk = (w: number, lo: number, hi: number) => {
-      const g = new THREE.PlaneGeometry(w, WALL_H);
-      const uvAttr = g.attributes.uv as THREE.BufferAttribute;
-      for (let i = 0; i < uvAttr.count; i++) uvAttr.setX(i, lo + uvAttr.getX(i) * (hi - lo));
-      return g;
-    };
-    return [mk(PANEL_SIDE_W, 0, a), mk(PANEL_CTR_W, a, 1 - a), mk(PANEL_SIDE_W, 1 - a, 1)] as const;
-  }, []);
-  const pipsTex = usePipsTexture();
-  const pipMat = useRef<THREE.MeshBasicMaterial>(null);
-  const tRef = useRef(0);
-  const gatedRef = useRef<THREE.Group>(null);
-
-  useFrame(({ camera }, rawDt) => {
-    // Distance gate (finding 3): the bridge sits behind the fog (and mostly
-    // past the far plane) for the whole corridor walk — skip submitting its
-    // ~40 draws and its star/pip ticks until the camera closes in. Hysteresis
-    // avoids threshold flicker. The spill pointLight stays OUTSIDE this group:
-    // a light-count change recompiles every lit material mid-scroll.
-    const g = gatedRef.current;
-    if (g) {
-      const d = Math.abs(END_X - camera.position.x);
-      if (g.visible) {
-        if (d > 40) g.visible = false;
-      } else if (d < 37) {
-        g.visible = true;
-      }
-      if (!g.visible) return;
-    }
-    updateStarUniforms(uni, rawDt, fxRefs.warp);
-    tRef.current += Math.min(rawDt, 1 / 30);
-    const pm = pipMat.current;
-    // 6s eased breathe, shallow (0.62↔0.86) — was a 2.9s ±0.35 pulse
-    if (pm) pm.opacity = 0.74 + 0.12 * Math.sin((tRef.current / 6) * Math.PI * 2);
-  });
-
-  const cy = WALL_H / 2;
-  const sy = Math.sin(PANEL_YAW);
-  const cz = Math.cos(PANEL_YAW);
-  return (
-    <group>
-      {/* (the cool starlight spill back toward the camera lives in
-          <CorridorLights/>, mounted at the Canvas root — never gated) */}
-
-      <group ref={gatedRef}>
-      {/* dark surround behind the canopy */}
-      <mesh position={[END_X + 1.6, cy, 0]} rotation-y={-Math.PI / 2}>
-        <planeGeometry args={[HALF_W * 2 + 3.5, WALL_H + 1]} />
-        <meshStandardMaterial color="#07070f" roughness={1} />
-      </mesh>
-
-      {/* three floor-to-ceiling star panes (shared material, one uniform set) */}
-      <mesh
-        geometry={geoms[0]}
-        material={starMat}
-        position={[END_X - (PANEL_SIDE_W / 2) * sy, cy, -(PANEL_CTR_W / 2 + (PANEL_SIDE_W / 2) * cz)]}
-        rotation-y={-Math.PI / 2 + PANEL_YAW}
-      />
-      <mesh geometry={geoms[1]} material={starMat} position={[END_X, cy, 0]} rotation-y={-Math.PI / 2} />
-      <mesh
-        geometry={geoms[2]}
-        material={starMat}
-        position={[END_X - (PANEL_SIDE_W / 2) * sy, cy, PANEL_CTR_W / 2 + (PANEL_SIDE_W / 2) * cz]}
-        rotation-y={-Math.PI / 2 - PANEL_YAW}
-      />
-
-      {/* four vertical mullion columns — at the pane seams + along the wings */}
-      {([-1, 1] as const).map((s) => (
-        <mesh key={`seam${s}`} position={[END_X - 0.05, cy, s * (PANEL_CTR_W / 2)]}>
-          <boxGeometry args={[0.14, WALL_H, 0.12]} />
-          <meshStandardMaterial color="#0a0b14" roughness={0.6} metalness={0.5} />
-        </mesh>
-      ))}
-      {([-1, 1] as const).map((s) => (
-        <mesh
-          key={`wing${s}`}
-          rotation-y={-s * PANEL_YAW}
-          position={[END_X - 0.05 - 2.0 * sy, cy, s * (PANEL_CTR_W / 2 + 2.0 * cz)]}
-        >
-          <boxGeometry args={[0.14, WALL_H, 0.12]} />
-          <meshStandardMaterial color="#0a0b14" roughness={0.6} metalness={0.5} />
-        </mesh>
-      ))}
-
-      {/* low console row — dark box masses beneath the glass */}
-      {CONSOLES.map((c, i) => (
-        <mesh key={`con${i}`} position={[END_X - 1.35, c.h / 2, c.z]}>
-          <boxGeometry args={[0.8, c.h, 1.04]} />
-          <meshStandardMaterial color="#1c2230" roughness={0.45} metalness={0.55} />
-        </mesh>
-      ))}
-      {/* ledge strip — DIMMED from the old white rail so the nebula owns the frame */}
-      <mesh position={[END_X - 0.95, 1.16, 0]}>
-        <boxGeometry args={[0.5, 0.05, HALF_W * 2 - 1.2]} />
-        <meshBasicMaterial color="#3d4c68" toneMapped={false} />
-      </mesh>
-      {/* pip strip across the console faces (opacity-pulsed) */}
-      <mesh position={[END_X - 1.77, 0.92, 0]} rotation-y={-Math.PI / 2}>
-        <planeGeometry args={[5.3, 0.14]} />
-        <meshBasicMaterial ref={pipMat} map={pipsTex} transparent toneMapped={false} depthWrite={false} />
-      </mesh>
-
-      {/* clickable comms kiosks — GitHub / LinkedIn uplinks flanking the
-          canopy, plus the central HAIL console (the diegetic contact control:
-          same mailto as the DOM email button). HAIL sits lower and a step
-          nearer so its head stays under the canopy's nebula focal band. */}
-      <SocialTerminal
-        label="GITHUB"
-        z={-2.15}
-        yaw={0.24}
-        phase={0}
-        activate={() => window.open(SITE.socials[0].href, "_blank", "noopener,noreferrer")}
-      />
-      <SocialTerminal
-        label="LINKEDIN"
-        z={2.15}
-        yaw={-0.24}
-        phase={0.6}
-        activate={() => window.open(SITE.socials[1].href, "_blank", "noopener,noreferrer")}
-      />
-      <SocialTerminal
-        label="HAIL"
-        z={0}
-        yaw={0}
-        phase={0.3}
-        x={END_X - 3.2}
-        baseHeadY={1.1}
-        header="COMMS — DIRECT LINE"
-        prompt="> SEND TRANSMISSION"
-        // "_self" = location change → the mail client; also lets the verify
-        // harness capture it through its window.open stub without navigating
-        activate={() => window.open(`mailto:${SITE.email}`, "_self")}
-      />
-      </group>
-    </group>
   );
 }
 
@@ -465,7 +66,7 @@ function WallRibs() {
   const items = useMemo(() => {
     const out: { x: number; side: -1 | 1 }[] = [];
     for (const side of [-1, 1] as const) {
-      for (let x = WALL_START + 2; x < WALL_END - 1; x += RIB_SPACING) {
+      for (let x = WALL_START + 2; x < HALL_END - 0.6; x += RIB_SPACING) {
         const blocked = ROOMS.some(
           (r) => r.side === side && Math.abs(x - r.x) < ALCOVE_OPEN_W / 2 + 0.7,
         );
@@ -586,7 +187,7 @@ function SkirtingStrips() {
       if (side === GALLERY_SIDE) cuts.push([GALLERY_X - GALLERY_SPAN / 2 - 0.6, GALLERY_X + GALLERY_SPAN / 2 + 0.6]);
       cuts.sort((a, b) => a[0] - b[0]);
       let x = WALL_START + 0.4;
-      const endX = WALL_END - 0.4;
+      const endX = HALL_END - 0.2;
       for (const [c0, c1] of cuts) {
         if (c0 > x + 0.6) out.push({ x0: x, x1: Math.min(c0, endX), side });
         x = Math.max(x, c1);
@@ -623,9 +224,11 @@ function SkirtingStrips() {
 export default function Corridor({
   mobile = false,
   quality = "high",
+  animate = true,
 }: {
   mobile?: boolean;
   quality?: GfxQuality;
+  animate?: boolean;
 }) {
   return (
     <group>
@@ -645,16 +248,17 @@ export default function Corridor({
         <mesh
           key={side}
           rotation-x={-Math.PI / 2}
-          position={[(WALL_START + WALL_END) / 2, 0.015, side * (HALF_W - 0.07)]}
+          position={[(WALL_START + HALL_END) / 2, 0.015, side * (HALF_W - 0.07)]}
         >
-          <planeGeometry args={[WALL_END - WALL_START, 0.08]} />
+          <planeGeometry args={[HALL_END - WALL_START, 0.08]} />
           <meshBasicMaterial color="#3e4f82" toneMapped={false} />
         </mesh>
       ))}
 
       {/* warm corridor lights: see <CorridorLights/> (Canvas root) */}
 
-      <Bridge />
+      <BridgeRoom />
+      <SpaceView mobile={mobile} animate={animate} />
     </group>
   );
 }

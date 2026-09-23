@@ -911,7 +911,7 @@ export default function Scene() {
             along so the whole hull appears as one piece. */}
         <CompileReveal post={!reduced} label="shell">
           <KitShell />
-          <Corridor mobile={isMobile} quality={quality} />
+          <Corridor mobile={isMobile} quality={quality} animate={!reduced} />
           <BulkheadGates />
         </CompileReveal>
       </Suspense>

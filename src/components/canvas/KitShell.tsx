@@ -16,6 +16,7 @@ import {
   ALCOVE_DEPTH,
   WALL_START,
   WALL_END,
+  BRIDGE_ENTRY_X,
   ROOMS,
   GALLERY_X,
   GALLERY_SPAN,
@@ -51,7 +52,11 @@ function buildShell(): { walls: Inst[]; wallsUpper: Inst[]; floors: Inst[] } {
   // X columns spanning the whole hall
   const cols: number[] = [];
   const nCols = Math.ceil((WALL_END - WALL_START) / TILE);
-  for (let i = 0; i < nCols; i++) cols.push(WALL_START + TILE * (i + 0.5));
+  for (let i = 0; i < nCols; i++) {
+    const x = WALL_START + TILE * (i + 0.5);
+    // the corridor ends at the bridge mouth — the bridge room takes over
+    if (x < BRIDGE_ENTRY_X) cols.push(x);
+  }
   const zc = [-3, -1, 1, 3]; // corridor floor lanes (cover ±4 = ±WALL_Z)
   const yRows = [0, TILE]; // two wall rows → WALL_H
 
