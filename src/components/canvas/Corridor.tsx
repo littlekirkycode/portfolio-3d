@@ -26,6 +26,7 @@ import {
   FloorReflection,
 } from "./corridorFx";
 import Wayfinding from "./rooms/Wayfinding";
+import HallDressing from "./hall/HallDressing";
 
 /** Ceiling light fixture X positions (warm point lights for real illumination). */
 const FIXTURES = [10, 40, 70, 100, 130, 158];
@@ -238,6 +239,7 @@ export default function Corridor({
       <CoveLights />
       {!mobile && quality === "high" && <FloorReflection />}
       <WallRibs />
+      <HallDressing />
       <Wayfinding />
       <FloorWashes />
       <SkirtingStrips />
