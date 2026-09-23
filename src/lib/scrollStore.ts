@@ -26,6 +26,37 @@ export const scrollRefs = {
   velocity: 0,
   /** 1 = moving forward (right), -1 = backward (left). */
   direction: 1 as 1 | -1,
+  /** The CAMERA's playhead: `progress` run through Rig's critically-damped
+   *  spring (written by Rig every frame). Anything that should stay in
+   *  lockstep with what the camera shows — focus-driven lights, props that
+   *  react to "the camera is here" — should read this instead of `progress`.
+   *  Equals `progress` exactly under reduced motion. */
+  cameraProgress: 0,
+  /** Where the scroll is HEADED, in progress (written by SmoothScrollProvider
+   *  every frame): the wheel/keyboard target Lenis is easing toward, or the
+   *  end point of a programmatic glide (nav jump, phone hop, dwell settle).
+   *  Equals `progress` at rest. Rig reads it to tell a one-stop hop (keep
+   *  looking at the rooms) from a long trip (look down the corridor). */
+  destination: 0,
+  /** True while a programmatic glide (nav jump, phone hop, dwell settle,
+   *  Home/End) is easing the scroll — already smooth by construction, so Rig
+   *  follows it more tightly than raw wheel input. */
+  gliding: false,
+  /** The current programmatic glide, written by SmoothScrollProvider's
+   *  scrollTo wrapper when a glide with a fixed duration starts (nav jump,
+   *  phone hop, dwell settle, Home/End, deep-link hashchange). `seq` bumps
+   *  per glide; `from`/`to` are progress, `t0` performance.now() ms, `dur`
+   *  seconds (0 = no fixed duration). Rig choreographs the camera across
+   *  the SAME duration, so camera, head and page arrive together. */
+  glide: { seq: 0, from: 0, to: 0, t0: 0, dur: 0 },
+  /** Bumped on every deliberate teleport (an `immediate` scrollTo: deep-link
+   *  landing, back-to-top, reduced-motion nav). Rig cuts to the new position
+   *  whenever it changes instead of guessing from speed. */
+  cutSeq: 0,
+  /** 0..1 head-turn authority (written by Rig): 1 at rest / normal walking
+   *  pace, falls toward 0 while the playhead rushes (flicks, nav jumps) so the
+   *  camera looks down the corridor instead of whip-panning past every bay. */
+  gaze: 1,
 };
 
 /** Pointer position, normalized to -1..1 (origin = viewport center). Updated on pointermove. */

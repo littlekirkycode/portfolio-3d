@@ -87,6 +87,13 @@ const HEAD_F = /* glsl */ `
 #include <common>
 #include <fog_pars_fragment>
 `;
+/* NaN RULE for every shader here: never pow() an interpolated varying raw.
+ * Perspective-correct interpolation lands a hair outside the vertex range
+ * at triangle edges (uv.y = -1e-8 on the dim edge of a wash), and GLSL
+ * pow(x<0, y) is NaN (HLSL: exp2(y*log2(x))). The flash trap's same-frame
+ * bisect caught exactly this — the bay base wash and the cove washes each
+ * emitting single NaN pixels, which Bloom's mip chain spreads frame-wide.
+ * Clamp the base first (the Effects HDR guard is the backstop, not the fix). */
 const TAIL_F = /* glsl */ `
 #include <fog_fragment>
 #include <colorspace_fragment>
@@ -208,7 +215,7 @@ varying vec2 vUv;
 varying vec3 vWorld;
 void main() {
   float ends = smoothstep(0.0, 0.07, vUv.x) * smoothstep(1.0, 0.93, vUv.x);
-  float a = pow(vUv.y, 2.3) * ends;
+  float a = pow(clamp(vUv.y, 0.0, 1.0), 2.3) * ends;
   gl_FragColor = vec4(uColor * uStrength, a);
   ${TAIL_F}
 }`,
@@ -278,11 +285,11 @@ varying float vH;
 varying vec3 vN;
 varying vec3 vV;
 void main() {
-  float dist = length(vV);
-  float facing = abs(dot(normalize(vN), vV / dist));
+  float dist = max(length(vV), 1e-4);
+  float facing = min(abs(dot(normalize(vN), vV / dist)), 1.0);
   float soft = pow(facing, 1.6);                 // fade the silhouette edges
   float near = smoothstep(0.8, 3.5, dist);       // never haze the lens
-  float a = uStrength * uDim * pow(vH, 1.4) * soft * near;
+  float a = uStrength * uDim * pow(clamp(vH, 0.0, 1.0), 1.4) * soft * near;
   gl_FragColor = vec4(uColor, a);
   ${TAIL_F}
 }`,
@@ -326,7 +333,8 @@ function useInstances(
 /** Approach beat: hall lights dim as you near the bridge so the nebula owns
  *  the final frame (was CeilingBars' colour lerp). */
 function bridgeDim(): number {
-  const t = Math.min(1, Math.max(0, (scrollRefs.progress - BRIDGE_ENTER_P) / 0.09));
+  // camera playhead: the dim tracks what the view shows, not raw scroll
+  const t = Math.min(1, Math.max(0, (scrollRefs.cameraProgress - BRIDGE_ENTER_P) / 0.09));
   return 1 - 0.82 * t * t * (3 - 2 * t);
 }
 
@@ -539,9 +547,10 @@ varying float vX;
 void main() {
   // steady — no travelling pulses (they read as flashing)
   float k;
+  float f = clamp(vF, 0.0, 1.0);                     // see NaN RULE
   if (vKind < 0.5) k = 1.6;                          // front line
-  else if (vKind < 1.5) k = 0.30 * pow(vF, 1.7);     // up-wash
-  else k = 0.16 * pow(vF, 2.4);                      // down-wash
+  else if (vKind < 1.5) k = 0.30 * pow(f, 1.7);      // up-wash
+  else k = 0.16 * pow(f, 2.4);                       // down-wash
   gl_FragColor = vec4(vColor * k * uDim, 1.0);
   ${TAIL_F}
 }`,

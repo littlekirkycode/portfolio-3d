@@ -1,9 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SECTIONS } from "@/lib/constants";
-import { useScrollStore, useShipSection } from "@/lib/scrollStore";
-import { ROOMS } from "@/components/canvas/hallConfig";
 import { useShipAudio } from "@/lib/useShipAudio";
 import { useQualityStore, restoreStoredQuality } from "@/lib/quality";
 import { getCapture, onCaptureChange } from "@/lib/capture";
@@ -12,27 +9,65 @@ import AchievementToast from "./AchievementToast";
 import { track } from "@/lib/analytics";
 
 /**
- * Fixed diegetic readout strip near the progress bar + the chip row (SOUND /
- * GFX / CAPTURE). Re-renders only on COARSE store changes (focusedRoom /
- * sectionIndex) — the scrollStore contract forbids per-frame React state, and
- * nothing here needs it. The readout text is decorative flavor (aria-hidden);
- * the chips are real, labelled buttons.
+ * Ship controls — SOUND / GFX / CAPTURE as ONE segmented glass pill in the
+ * bottom dock's right slot (was three free-floating chips that collided with
+ * the room CTAs). Desktop shows icon + label; phones show icons only (each
+ * keeps a full accessible name). Mounted exactly once (useShipAudio is a
+ * single-instance hook). Re-renders only on coarse state.
  */
 
-/** Shared chip styling — the invisible before: overlay extends the tap target
- *  to >=44px tall without enlarging the visible chip. */
-const CHIP =
-  "pointer-events-auto relative flex items-center gap-2 border border-line bg-bg-elev/60 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-dim backdrop-blur-md transition-colors duration-300 before:absolute before:inset-x-0 before:-inset-y-2 hover:border-accent hover:text-ink";
+const ICON = {
+  width: 15,
+  height: 15,
+  viewBox: "0 0 16 16",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.4,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
 
-export default function HudReadout() {
-  const focusedRoom = useScrollStore((s) => s.focusedRoom);
-  const sectionIndex = useShipSection();
+function SoundIcon({ on }: { on: boolean }) {
+  return (
+    <svg {...ICON}>
+      <path d="M2.5 6.2h2.2L8 3.5v9L4.7 9.8H2.5z" />
+      {on ? (
+        <>
+          <path d="M10.4 6a2.8 2.8 0 0 1 0 4" />
+          <path d="M12.3 4.2a5.4 5.4 0 0 1 0 7.6" />
+        </>
+      ) : (
+        <path d="M10.6 6.3l3 3.4M13.6 6.3l-3 3.4" />
+      )}
+    </svg>
+  );
+}
+
+function GfxIcon({ lite }: { lite: boolean }) {
+  return (
+    <svg {...ICON}>
+      <path d="M8 2.2l5.3 5.8L8 13.8 2.7 8z" />
+      {!lite && <path d="M8 5.3l2.5 2.7L8 10.7 5.5 8z" fill="currentColor" stroke="none" />}
+    </svg>
+  );
+}
+
+function CaptureIcon() {
+  return (
+    <svg {...ICON}>
+      <path d="M2.5 5.5h2.3l1.2-1.8h4l1.2 1.8h2.3v7h-11z" />
+      <circle cx="8" cy="8.9" r="2.1" />
+    </svg>
+  );
+}
+
+export default function HudReadout({ readout, compact = false }: { readout: string; compact?: boolean }) {
   const { on, toggle } = useShipAudio();
   const isMobile = useIsMobile();
-  const onBridge = sectionIndex === SECTIONS.length - 1;
 
   // Graphics tier (finding 46): store boots "high" for hydration; the
-  // persisted chip choice is restored once, post-mount.
+  // persisted choice is restored once, post-mount.
   const quality = useQualityStore((s) => s.quality);
   const setQuality = useQualityStore((s) => s.setQuality);
   useEffect(() => {
@@ -40,49 +75,17 @@ export default function HudReadout() {
   }, []);
   const lite = quality === "lite";
 
-  // Photo mode (finding 47): the chip appears once Scene registers a capture
-  // fn (the canvas chunk lands after this mounts) and hides itself for good
-  // if a capture ever fails — graceful absence over a broken control.
+  // Photo mode (finding 47): the segment appears once Scene registers a
+  // capture fn and hides itself for good if a capture ever fails.
   const [capture, setCapture] = useState<"wait" | "ready" | "busy" | "failed">("wait");
   const busyRef = useRef(false);
   useEffect(
     () =>
       onCaptureChange((ready) =>
-        setCapture((c) =>
-          c === "failed" || c === "busy" ? c : ready ? "ready" : "wait",
-        ),
+        setCapture((c) => (c === "failed" || c === "busy" ? c : ready ? "ready" : "wait")),
       ),
     [],
   );
-
-  // Retain the last visited exhibit between bays so the strip never blanks.
-  // State adjusted during render (React's documented "adjust state when props
-  // change" pattern) — NOT a ref: mutating/reading a ref mid-render is unsafe
-  // under StrictMode/concurrent rendering and was flagged by react-hooks/refs.
-  const roomIndex = focusedRoom
-    ? ROOMS.findIndex((r) => r.id === focusedRoom)
-    : -1;
-  const [last, setLast] = useState({ deck: "01", exhibit: "--" });
-  // Deck boundaries mirror the bulkhead gates: rooms 0–2 | 3–4 (+gallery) | 5–8.
-  const current =
-    roomIndex >= 0
-      ? {
-          deck: roomIndex <= 2 ? "01" : roomIndex <= 4 ? "02" : "03",
-          exhibit: ROOMS[roomIndex].index,
-        }
-      : last;
-  if (current.deck !== last.deck || current.exhibit !== last.exhibit) {
-    setLast(current);
-  }
-  const deck = onBridge ? "03" : current.deck;
-  const exhibit = current.exhibit;
-  // On the bridge the strip stops counting exhibits; before the first bay it
-  // reads IN TRANSIT instead of a broken-looking "--/09" placeholder.
-  const readout = onBridge
-    ? "DECK 03 · BRIDGE · GRAVITY NOMINAL · CREW 1"
-    : exhibit === "--"
-      ? `DECK ${deck} · IN TRANSIT · GRAVITY NOMINAL · CREW 1`
-      : `DECK ${deck} · EXHIBIT ${exhibit}/09 · GRAVITY NOMINAL · CREW 1`;
 
   const shoot = async () => {
     if (busyRef.current) return;
@@ -94,19 +97,14 @@ export default function HudReadout() {
       const frame = await fn();
       if (!frame) throw new Error("capture failed");
       const { composePhoto } = await import("@/lib/photoShot");
-      const shotReadout = onBridge
-        ? "KIRKHAM·01 — BRIDGE"
-        : exhibit === "--"
-          ? "KIRKHAM·01 — IN TRANSIT"
-          : `KIRKHAM·01 — EXHIBIT ${exhibit}/09`;
       const url = (location.host + location.pathname).replace(/\/$/, "");
-      const png = await composePhoto(frame, { readout: shotReadout, url });
+      const png = await composePhoto(frame, { readout: `KIRKHAM·01 — ${readout}`, url });
       if (!png) throw new Error("compose failed");
-      const name = onBridge
-        ? "kirkham-01-bridge.png"
-        : exhibit === "--"
-          ? "kirkham-01-corridor.png"
-          : `kirkham-01-exhibit-${exhibit}.png`;
+      const slug = readout
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      const name = `kirkham-01-${slug || "corridor"}.png`;
       // Mobile: hand the still to the native share sheet when files are
       // shareable. A cancelled sheet is NOT a failure — fall back to saving.
       if (isMobile && typeof navigator.share === "function") {
@@ -127,96 +125,64 @@ export default function HudReadout() {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
       setCapture("ready");
     } catch {
-      setCapture("failed"); // capture isn't working here — hide the chip
+      setCapture("failed"); // capture isn't working here — hide the segment
     } finally {
       busyRef.current = false;
     }
   };
 
+  const showCapture = capture === "ready" || capture === "busy";
+
   return (
     <>
       {/* One-shot achievement toast (fired by the drone's 5th-poke payoff). */}
       <AchievementToast />
-      <div
-        // Desktop: the strip lifts clear of the contact section's footer line
-        // while the bridge is framed — otherwise the fixed readout/chip and the
-        // panel's bottom chrome (location · gravity · ©) collide into garbled
-        // text. Mobile: no lift (it landed the chip mid-card on the bridge);
-        // the chip just sits a step higher, above the flowing footer.
-        // flex-wrap: three chips can two-row on narrow phones instead of
-        // spilling off the left edge.
-        // Mobile bottom is calc(6vh + 4.5rem) (S2): ProjectLink's pill row is
-        // fixed at bottom-[6vh] and ~60px tall, so anchoring the (bottom-
-        // aligned, upward-wrapping) chip rows 72px above the pills' anchor
-        // keeps a ≥12px gap at every viewport height — at 390x844 the wrapped
-        // CAPTURE chip used to overlap the pill row by ~14px. Desktop is
-        // untouched (desktop:bottom-12 wins there).
-        className={`pointer-events-none fixed bottom-[calc(6vh+4.5rem)] right-[8vw] z-40 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 transition-transform duration-500 ease-out desktop:bottom-12 ${
-          onBridge ? "desktop:-translate-y-24" : ""
-        }`}
-      >
-        <p
-          aria-hidden
-          className="hidden items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-dim desktop:flex"
-        >
-          <span className="hud-blink inline-block h-1 w-1 rounded-full bg-accent" />
-          <span>{readout}</span>
-        </p>
-
+      <div role="group" aria-label="Ship controls" className={`ui-seg ${compact ? "ui-seg--sm" : ""}`}>
         <button
           type="button"
           data-cursor
           aria-pressed={on}
-          aria-label={on ? "Mute ship audio" : "Enable ship audio"}
+          aria-label="Sound — ship audio"
+          title={on ? "Sound on" : "Sound off"}
           onClick={() => {
             track("sound_toggled", { on: !on });
             toggle();
           }}
-          className={CHIP}
+          className="ui-hit"
         >
-          <span
-            aria-hidden
-            className={`h-1.5 w-1.5 rounded-full ${on ? "hud-blink bg-accent" : "bg-ink-dim/50"}`}
-          />
-          SOUND {on ? "ON" : "OFF"}
+          <SoundIcon on={on} />
+          <span className="hidden min-[1180px]:inline">Sound</span>
         </button>
 
-        {/* GFX tier chip (finding 46) — manual escape hatch for the auto
+        {/* GFX tier (finding 46) — manual escape hatch for the auto
             escalation; the choice persists and pins the tier. */}
         <button
           type="button"
           data-cursor
-          aria-pressed={lite}
-          aria-label={
-            lite ? "Switch to cinematic graphics" : "Switch to lite graphics"
-          }
+          aria-label={lite ? "Lite graphics — switch to cinematic" : "Cinematic graphics — switch to lite"}
+          title={lite ? "Graphics: lite" : "Graphics: cinematic"}
           onClick={() => setQuality(lite ? "high" : "lite")}
-          className={CHIP}
+          className="ui-hit"
         >
-          <span
-            aria-hidden
-            className={`h-1.5 w-1.5 rounded-full ${lite ? "bg-ink-dim/50" : "bg-accent-2"}`}
-          />
-          GFX {lite ? "LITE" : "CINEMATIC"}
+          <GfxIcon lite={lite} />
+          <span className="hidden min-[1180px]:inline">{lite ? "Lite" : "Cinematic"}</span>
         </button>
 
-        {/* CAPTURE chip (finding 47) — absent until the scene can actually
-            deliver a frame; disappears permanently on a failed capture. */}
-        {(capture === "ready" || capture === "busy") && (
+        {/* CAPTURE (finding 47) — absent until the scene can deliver a frame. */}
+        {showCapture && (
           <button
             type="button"
             data-cursor
-            aria-label="Save a framed still of the current view"
+            aria-label="Capture — save a framed still of the current view"
+            aria-busy={capture === "busy"}
+            title="Capture a still"
             onClick={shoot}
-            className={CHIP}
+            className="ui-hit"
           >
-            <span
-              aria-hidden
-              className={`h-1.5 w-1.5 rounded-full ${
-                capture === "busy" ? "hud-blink bg-accent" : "bg-ink-dim/50"
-              }`}
-            />
-            {capture === "busy" ? "SAVING" : "CAPTURE"}
+            <span className={capture === "busy" ? "ui-breathe" : undefined}>
+              <CaptureIcon />
+            </span>
+            <span className="hidden min-[1180px]:inline">{capture === "busy" ? "Saving" : "Capture"}</span>
           </button>
         )}
       </div>

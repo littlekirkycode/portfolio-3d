@@ -110,7 +110,10 @@ export const starFragment = /* glsl */ `
     float d = length(f - off);
     float size = mix(0.03, 0.10, hash21(id + 5.3));
     float star = smoothstep(size, 0.0, d);
-    float tw = 0.55 + 0.45 * sin(t * (0.8 + 3.0 * rnd / density) + rnd * 40.0);
+    // Slow, shallow shimmer: periods 5–12s, ±18%. The old 0.8–3.8 rad/s
+    // (1.6–8s) at ±45% made the brighter stars pop in and out of the bloom
+    // threshold — a field of random sparkles across every window.
+    float tw = 0.82 + 0.18 * sin(t * (0.5 + 0.75 * rnd / density) + rnd * 40.0);
     return star * tw;
   }
 
@@ -158,9 +161,12 @@ export const starFragment = /* glsl */ `
     // Star colours: far layer cool blue, near layer warm white. Streaks
     // brighten as the jump spools up.
     float boost = 1.0 + 2.6 * w;
-    col += vec3(0.55, 0.65, 0.85) * s1 * 0.55 * boost;
-    col += vec3(0.85, 0.90, 1.00) * s2 * 1.00 * boost;
-    col += vec3(1.00, 0.97, 0.92) * s3 * 1.40 * boost;
+    // Resting star peaks sit just under the 0.78 bloom threshold: sub-pixel
+    // stars drifting across the pixel grid otherwise crawl in and out of
+    // bloom (sparkle). The warp boost still pushes the streaks into glow.
+    col += vec3(0.55, 0.65, 0.85) * s1 * 0.50 * boost;
+    col += vec3(0.85, 0.90, 1.00) * s2 * 0.72 * boost;
+    col += vec3(1.00, 0.97, 0.92) * s3 * 0.80 * boost;
 
     // Fast scrolls give the clouds a brief energetic lift.
     col += neb2 * abs(uVelocity) * 0.05;
@@ -256,7 +262,20 @@ function makePilotLabelTexture(): THREE.CanvasTexture {
   ctx.textBaseline = "alphabetic";
   ctx.font = `700 76px ${mono}`;
   ctx.fillStyle = "#f4f1ea";
-  ctx.fillText("JAMES — PILOT", 320, 92);
+  // The em dash is DRAWN, not typeset: the monospace fallback chain rendered
+  // "—" with a stray hook under it at gallery distance. Words are measured
+  // so the whole line stays centred on 320.
+  const left = "JAMES";
+  const right = "PILOT";
+  const gap = 96;
+  const wl = ctx.measureText(left).width;
+  const wr = ctx.measureText(right).width;
+  const x0 = 320 - (wl + gap + wr) / 2;
+  ctx.textAlign = "left";
+  ctx.fillText(left, x0, 92);
+  ctx.fillText(right, x0 + wl + gap, 92);
+  ctx.fillRect(x0 + wl + 22, 62, gap - 44, 7);
+  ctx.textAlign = "center";
   ctx.font = `500 42px ${mono}`;
   ctx.fillStyle = "rgba(255,176,122,0.9)";
   ctx.fillText("re-entry pending…", 320, 156);
@@ -355,8 +374,13 @@ function SpacewalkPilot() {
         <group ref={tumble}>
           <primitive object={fig} />
         </group>
-        {/* HUD name tag — upright, riding the drift */}
-        <mesh position={[0, 0.52, 0.03]}>
+        {/* HUD name tag — upright, riding the drift. Local z 0.17 brings it
+            to |z| = HALF_W + 0.02, i.e. IN FRONT of the mullion faces
+            (HALF_W + 0.06): at z 0.03 it sat behind them and the 0.57 post
+            sliced "PILOT" in half (critic r1, d_055). Still behind the wall
+            plane and under the lintel (bottom 3.65 > tag top ~3.13), and no
+            depthTest override, so it never shows through walls from afar. */}
+        <mesh position={[0, 0.52, 0.17]}>
           <planeGeometry args={[1.08, 0.38]} />
           <meshBasicMaterial map={labelTex} transparent toneMapped={false} depthWrite={false} />
         </mesh>
@@ -373,10 +397,10 @@ const GLASS_H = WALL_H - SILL_H - LINTEL_H;
 const GLASS_Y = SILL_H + GLASS_H / 2;
 const PORT_Y = 2.0; // porthole centre height
 
-/** Tiny emissive dart that lerps across the gallery view every ~25s — one
- *  reused mesh, position writes only (micro-delight, no allocation). */
-const DART_PERIOD = 25;
-const DART_FLIGHT = 2.6;
+/* (The "dart" — a bright toneMapped:false streak that popped visible, raced
+ *  across the glazing in 2.6s and vanished every 25s — was removed: a
+ *  travelling light that blinked into existence over the bloom threshold,
+ *  i.e. a periodic white flash at the gallery dwell.) */
 
 function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
   const S = GALLERY_SIDE;
@@ -391,8 +415,6 @@ function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
     [],
   );
   const mullions = useRef<THREE.InstancedMesh>(null);
-  const dart = useRef<THREE.Mesh>(null);
-  const tRef = useRef(0);
 
   const posts = useMemo(() => {
     const n = Math.max(3, Math.round(GALLERY_SPAN / 1.2) + 1); // verticals incl. edges
@@ -416,18 +438,6 @@ function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
 
   useFrame((_, rawDt) => {
     updateStarUniforms(uni, rawDt); // gallery never warps — that's the bridge's beat
-    tRef.current += Math.min(rawDt, 1 / 30);
-    const d = dart.current;
-    if (!d) return;
-    const cycle = tRef.current % DART_PERIOD;
-    if (cycle < DART_FLIGHT) {
-      const k = cycle / DART_FLIGHT;
-      d.visible = true;
-      d.position.x = -(GALLERY_SPAN / 2 + 1.5) + k * (GALLERY_SPAN + 3);
-      d.position.y = 2.55 + Math.sin(k * 5.2) * 0.12;
-    } else {
-      d.visible = false;
-    }
   });
 
   return (
@@ -466,13 +476,6 @@ function Gallery({ rakeMat }: { rakeMat: THREE.MeshBasicMaterial }) {
       {/* starlight rake — additive spill pooling on the floor under the glass */}
       <mesh material={rakeMat} rotation-x={-Math.PI / 2} position={[0, 0.022, S * (HALF_W - 1.5)]}>
         <planeGeometry args={[GALLERY_SPAN + 1.2, 2.8]} />
-      </mesh>
-
-      {/* micro-delight: a distant ship darting across the view (behind mullions,
-          in front of the glass) */}
-      <mesh ref={dart} visible={false} position={[0, 2.55, S * (HALF_W + 0.24)]}>
-        <boxGeometry args={[0.5, 0.035, 0.05]} />
-        <meshBasicMaterial color="#ffd9a8" toneMapped={false} />
       </mesh>
 
       {/* the pilot, regrettably outside */}

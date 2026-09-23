@@ -6,6 +6,7 @@ import type { RoomTheme } from "@/lib/constants";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { hexA, useTextTexture } from "./canvas2d";
 import { ALCOVE_DEPTH, type Room } from "./hallConfig";
+import { GLOW, NEUTRAL, tintNeutral } from "./theme";
 
 /* ── the painted bay floor system (split out of Walls.tsx + RoomProps.tsx,
  *    finding 34): the flush accent mat / platform each bay's props rest on
@@ -28,15 +29,11 @@ const MAT_SPECS: Record<RoomTheme, { shape: "rect" | "round" | "map"; w: number;
 };
 
 /** A stylized top-down CITY MAP covering the floor (Nuremi maps concierge):
- *  street grid, river, a park, a glowing navigation route, and pin markers. */
+ *  street grid, river, a park, compass + scale bar — deliberately quiet so
+ *  the map TABLE (the hero) carries the route story. */
 function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z: number }) {
   const render = useMemo(
     () => (ctx: CanvasRenderingContext2D, cw: number, ch: number) => {
-      // R6: shadowBlur applies in BACKING-STORE pixels — the canvas spec
-      // exempts shadow geometry from the CTM — so useTextTexture's mobile
-      // 0.5x transform halves the map but not the glow, doubling the halo
-      // relative to the street grid. Scale the blur by the live transform.
-      const bs = ctx.getTransform().a || 1;
       const line = (x1: number, y1: number, x2: number, y2: number) => {
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
       };
@@ -44,7 +41,7 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       ctx.fillStyle = "#10131f";
       ctx.fillRect(0, 0, cw, ch);
       // faint city blocks
-      ctx.fillStyle = hexA(accent, 0.04);
+      ctx.fillStyle = hexA(accent, 0.03);
       for (let i = 0; i < 14; i++) {
         for (let j = 0; j < 9; j++) {
           if ((i + j) % 2 === 0) ctx.fillRect((cw * i) / 14, (ch * j) / 9, cw / 14, ch / 9);
@@ -62,53 +59,18 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       // park
       ctx.fillStyle = hexA("#63d39a", 0.16);
       ctx.fillRect(cw * 0.1, ch * 0.12, cw * 0.15, ch * 0.18);
-      // minor street grid
+      // quiet street grid: the floor supports the map TABLE (the hero tells
+      // the route story with its pins) — no second route, pins or glow here
       ctx.lineCap = "butt";
-      ctx.strokeStyle = hexA(accent, 0.4);
+      ctx.strokeStyle = hexA(accent, 0.22);
       ctx.lineWidth = 3;
       for (let i = 1; i < 14; i++) line((cw * i) / 14, 0, (cw * i) / 14, ch);
       for (let j = 1; j < 9; j++) line(0, (ch * j) / 9, cw, (ch * j) / 9);
       // major avenues
-      ctx.strokeStyle = hexA(accent, 0.6);
+      ctx.strokeStyle = hexA(accent, 0.34);
       ctx.lineWidth = 7;
       line(0, ch * 0.33, cw, ch * 0.33);
       line(cw * 0.5, 0, cw * 0.5, ch);
-      ctx.lineWidth = 5;
-      line(0, ch * 0.08, cw, ch * 0.78); // diagonal boulevard
-      // glowing navigation route
-      ctx.shadowColor = accent;
-      ctx.shadowBlur = 26 * bs;
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 12;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      ctx.moveTo(cw * 0.2, ch * 0.8);
-      ctx.lineTo(cw * 0.2, ch * 0.33);
-      ctx.lineTo(cw * 0.5, ch * 0.33);
-      ctx.lineTo(cw * 0.5, ch * 0.18);
-      ctx.lineTo(cw * 0.72, ch * 0.18);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      // pin markers (flat, drawn on the map)
-      const pin = (x: number, y: number, r: number, hi: boolean) => {
-        ctx.fillStyle = hi ? "#ffffff" : accent;
-        if (hi) { ctx.shadowColor = accent; ctx.shadowBlur = 22 * bs; }
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.quadraticCurveTo(x - r, y - r * 1.25, x - r, y - r * 1.85);
-        ctx.arc(x, y - r * 1.85, r, Math.PI, 0, false);
-        ctx.quadraticCurveTo(x + r, y - r * 1.25, x, y);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = hi ? accent : "#10131f";
-        ctx.beginPath();
-        ctx.arc(x, y - r * 1.85, r * 0.42, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      pin(cw * 0.2, ch * 0.8, 20, false); // start
-      pin(cw * 0.5, ch * 0.55, 18, false); // waypoint
-      pin(cw * 0.72, ch * 0.18, 30, true); // destination (highlighted)
       // compass rose (top-right)
       const cxr = cw * 0.9;
       const cyr = ch * 0.16;
@@ -123,13 +85,13 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       ctx.lineTo(cxr + R * 0.32, cyr + R * 0.1);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = hexA("#f4f1ea", 0.75);
+      ctx.fillStyle = hexA("#f4f1ea", 0.45);
       ctx.font = `bold ${Math.round(R * 0.6)}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("N", cxr, cyr + R * 0.55);
       // scale bar (bottom-left)
-      ctx.strokeStyle = hexA("#f4f1ea", 0.5);
+      ctx.strokeStyle = hexA("#f4f1ea", 0.3);
       ctx.lineWidth = 3;
       const sx = cw * 0.06;
       const sy = ch * 0.93;
@@ -137,7 +99,7 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
       line(sx, sy - 6, sx, sy + 6);
       line(sx + cw * 0.12, sy - 6, sx + cw * 0.12, sy + 6);
       // inset frame
-      ctx.strokeStyle = hexA(accent, 0.5);
+      ctx.strokeStyle = hexA(accent, 0.32);
       ctx.lineWidth = 4;
       ctx.strokeRect(8, 8, cw - 16, ch - 16);
     },
@@ -147,16 +109,28 @@ function MapFloor({ accent, w, d, z }: { accent: string; w: number; d: number; z
   return (
     <mesh position={[0, 0.012, z]} rotation-x={-Math.PI / 2}>
       <planeGeometry args={[w, d]} />
-      <meshBasicMaterial map={tex} toneMapped={false} />
+      {/* lit (not unlit): the map is a printed floor, it takes the bay light */}
+      <meshStandardMaterial map={tex} roughness={0.8} metalness={0} />
     </mesh>
   );
 }
 
+/** Jewellery (quiet luxury): a brass hairline instead of an accent rim. */
+const BRASS_LINE = "#b8925a";
+
 export function BayMat({ room }: { room: Room }) {
   const spec = MAT_SPECS[room.theme];
-  // dark platform slab + softened emissive accent rim → lit exhibit base, not a rug
-  const color = useMemo(() => new THREE.Color(room.accent).multiplyScalar(0.11), [room.accent]);
-  const rim = useMemo(() => new THREE.Color(room.accent).multiplyScalar(0.85), [room.accent]);
+  // dark NEUTRAL exhibit base, only tinted toward the accent (DESIGN_SYSTEM
+  // §2: large surfaces are neutrals) + a quiet hairline edge at trim level —
+  // a lit plinth floor, never an accent-coloured carpet with a neon rim
+  const color = useMemo(() => tintNeutral(NEUTRAL.hullShadow, room.accent, 0.1), [room.accent]);
+  const rim = useMemo(
+    () =>
+      room.theme === "jewellery"
+        ? new THREE.Color(BRASS_LINE).multiplyScalar(0.6)
+        : new THREE.Color(room.accent).multiplyScalar(GLOW.trim * 0.55),
+    [room.accent, room.theme],
+  );
   const cz = -ALCOVE_DEPTH + 1.7; // under the prop cluster
   if (spec.shape === "map") return <MapFloor accent={room.accent} w={spec.w} d={spec.d} z={cz} />;
   if (spec.shape === "round") {
@@ -165,11 +139,11 @@ export function BayMat({ room }: { room: Room }) {
       <group position={[0, 0, cz]}>
         <mesh position-y={0.006}>
           <cylinderGeometry args={[r, r, 0.012, 48]} />
-          <meshStandardMaterial color={color} roughness={1} />
+          <meshStandardMaterial color={color} roughness={0.78} metalness={0.2} />
         </mesh>
-        {/* thin glowing ring around the platform edge */}
+        {/* thin hairline around the platform edge */}
         <mesh position-y={0.014} rotation-x={-Math.PI / 2}>
-          <ringGeometry args={[r - 0.015, r + 0.05, 64]} />
+          <ringGeometry args={[r - 0.01, r + 0.025, 64]} />
           <meshBasicMaterial color={rim} toneMapped={false} />
         </mesh>
       </group>
@@ -177,14 +151,14 @@ export function BayMat({ room }: { room: Room }) {
   }
   return (
     <group position={[0, 0, cz]}>
-      {/* slightly larger emissive underlay → a ~5cm glowing rim around the slab */}
+      {/* slightly larger emissive underlay → a ~2.5 cm hairline round the slab */}
       <mesh position-y={0.003}>
-        <boxGeometry args={[spec.w + 0.1, 0.006, spec.d + 0.1]} />
+        <boxGeometry args={[spec.w + 0.05, 0.006, spec.d + 0.05]} />
         <meshBasicMaterial color={rim} toneMapped={false} />
       </mesh>
       <mesh position-y={0.006}>
         <boxGeometry args={[spec.w, 0.012, spec.d]} />
-        <meshStandardMaterial color={color} roughness={1} />
+        <meshStandardMaterial color={color} roughness={0.78} metalness={0.2} />
       </mesh>
     </group>
   );
@@ -208,123 +182,24 @@ type FloorArt = {
   draw: (ctx: CanvasRenderingContext2D, W: number, H: number, accent: string) => void;
 };
 
-const FLOOR_ART: Record<RoomTheme, FloorArt> = {
-  // training zone ring around the weights corner + dashed approach from the
-  // treadmill side — the workout "spawn point"
-  gym: {
-    cx: 1.35, cz: 1.35, w: 2.6, d: 2.2,
-    draw(ctx, W, H, accent) {
-      ctx.strokeStyle = hexA(accent, 0.55);
-      ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.arc(W * 0.52, H * 0.52, W * 0.3, 0, Math.PI * 2); ctx.stroke();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = hexA(accent, 0.35);
-      ctx.beginPath(); ctx.arc(W * 0.52, H * 0.52, W * 0.38, 0, Math.PI * 2); ctx.stroke();
-      // tick marks on the outer ring
-      for (let a = 0; a < 4; a++) {
-        const t = (a * Math.PI) / 2 + Math.PI / 4;
-        ctx.beginPath();
-        ctx.moveTo(W * 0.52 + Math.cos(t) * W * 0.36, H * 0.52 + Math.sin(t) * W * 0.36);
-        ctx.lineTo(W * 0.52 + Math.cos(t) * W * 0.42, H * 0.52 + Math.sin(t) * W * 0.42);
-        ctx.stroke();
-      }
-      ctx.setLineDash([14, 12]);
-      ctx.strokeStyle = hexA("#f4f1ea", 0.22);
-      ctx.beginPath(); ctx.moveTo(0, H * 0.3); ctx.quadraticCurveTo(W * 0.3, H * 0.32, W * 0.42, H * 0.48); ctx.stroke();
-    },
-  },
-  // three concentric life-orbit arcs, a node dot pulled onto each
+/* Retired (the rooms were rebuilt around new heroes and these markings
+ * pointed at objects that no longer exist, or doubled the hero's story):
+ * gym (SelfQuest lays its own rubber floor + lifting platform), habit
+ * (SelfGrow's deck disc + streak bed), map (the map table tells the route),
+ * jewellery (the boutique's brass hairline lives on the mat itself). */
+const FLOOR_ART: Partial<Record<RoomTheme, FloorArt>> = {
+  // three concentric life-orbit rings (no node dots: they read as stray
+  // white/accent specks from the dwell camera)
   lifeos: {
     cx: -0.2, cz: 0.5, w: 3.2, d: 2.4,
     draw(ctx, W, H, accent) {
       for (let i = 0; i < 3; i++) {
         const r = W * (0.14 + i * 0.11);
-        ctx.strokeStyle = hexA(accent, 0.45 - i * 0.1);
+        ctx.strokeStyle = hexA(accent, 0.32 - i * 0.07);
         ctx.lineWidth = 3;
         ctx.setLineDash(i === 1 ? [16, 10] : []);
         ctx.beginPath(); ctx.arc(W * 0.5, H * 0.5, r, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
-        const t = -0.9 + i * 2.1;
-        ctx.fillStyle = hexA(i === 0 ? "#f4f1ea" : accent, 0.75);
-        ctx.beginPath();
-        ctx.arc(W * 0.5 + Math.cos(t) * r, H * 0.5 + Math.sin(t) * r * (H / W) * 1.33, 8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    },
-  },
-  // growth path: dots swelling toward the planter bench (habit streak)
-  habit: {
-    cx: -1.0, cz: 0.85, w: 3.0, d: 2.2,
-    draw(ctx, W, H, accent) {
-      const pts = [
-        [0.1, 0.75, 5], [0.28, 0.62, 8], [0.46, 0.52, 12], [0.64, 0.44, 17], [0.82, 0.38, 23],
-      ] as const;
-      ctx.setLineDash([10, 12]);
-      ctx.strokeStyle = hexA(accent, 0.4);
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      pts.forEach(([x, y], i) => (i ? ctx.lineTo(W * x, H * y) : ctx.moveTo(W * x, H * y)));
-      ctx.stroke();
-      ctx.setLineDash([]);
-      pts.forEach(([x, y, r], i) => {
-        ctx.fillStyle = hexA(accent, 0.35 + i * 0.13);
-        ctx.beginPath(); ctx.arc(W * x, H * y, r, 0, Math.PI * 2); ctx.fill();
-      });
-    },
-  },
-  // the journey: dashed route from the globe's base out toward the signpost,
-  // waypoint dots en route (the mat under this is already a map grid)
-  map: {
-    cx: -0.2, cz: 0.3, w: 4.2, d: 3.0,
-    draw(ctx, W, H, accent) {
-      ctx.setLineDash([18, 12]);
-      ctx.strokeStyle = hexA("#f4f1ea", 0.55);
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(W * 0.26, H * 0.12);
-      ctx.quadraticCurveTo(W * 0.1, H * 0.55, W * 0.36, H * 0.72);
-      ctx.quadraticCurveTo(W * 0.62, H * 0.88, W * 0.98, H * 0.66);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      for (const [x, y] of [[0.26, 0.12], [0.19, 0.47], [0.36, 0.72], [0.68, 0.82]] as const) {
-        ctx.fillStyle = hexA(accent, 0.9);
-        ctx.beginPath(); ctx.arc(W * x, H * y, 9, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = hexA(accent, 0.4);
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(W * x, H * y, 16, 0, Math.PI * 2); ctx.stroke();
-      }
-      // arrowhead exiting toward the signpost (off the decal's right edge)
-      ctx.fillStyle = hexA("#f4f1ea", 0.7);
-      ctx.beginPath();
-      ctx.moveTo(W * 0.985, H * 0.61);
-      ctx.lineTo(W * 0.94, H * 0.72);
-      ctx.lineTo(W * 0.965, H * 0.59);
-      ctx.closePath();
-      ctx.fill();
-    },
-  },
-  // boutique lane: double-line runner between the ring and necklace plinths
-  jewellery: {
-    cx: -0.7, cz: -0.25, w: 3.0, d: 2.6,
-    draw(ctx, W, H, accent) {
-      ctx.strokeStyle = hexA(accent, 0.4);
-      ctx.lineWidth = 3;
-      for (const off of [-0.055, 0.055]) {
-        ctx.beginPath();
-        ctx.moveTo(W * (0.72 + off), H * 0.1);
-        ctx.lineTo(W * (0.24 + off), H * 0.82);
-        ctx.stroke();
-      }
-      for (let i = 0; i < 5; i++) {
-        const t = 0.15 + i * 0.16;
-        const x = 0.72 + (0.24 - 0.72) * t;
-        const y = 0.1 + (0.82 - 0.1) * t;
-        ctx.strokeStyle = hexA("#f4f1ea", 0.28);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(W * (x - 0.075), H * y);
-        ctx.lineTo(W * (x + 0.075), H * y);
-        ctx.stroke();
       }
     },
   },
@@ -359,8 +234,14 @@ const FLOOR_ART: Record<RoomTheme, FloorArt> = {
         const t = 0.14 + i * 0.15;
         const x = 0.98 + (0.09 - 0.98) * t;
         const y = 0.42 + (0.62 - 0.42) * t;
-        ctx.fillStyle = hexA(i >= 4 ? "#f4f1ea" : accent, 0.8);
-        ctx.beginPath(); ctx.arc(W * x, H * y, i >= 4 ? 9 : 6, 0, Math.PI * 2); ctx.fill();
+        // the two current roles are marked by a ring, not a white blob
+        ctx.fillStyle = hexA(accent, 0.8);
+        ctx.beginPath(); ctx.arc(W * x, H * y, 6, 0, Math.PI * 2); ctx.fill();
+        if (i >= 4) {
+          ctx.strokeStyle = hexA(accent, 0.6);
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(W * x, H * y, 12, 0, Math.PI * 2); ctx.stroke();
+        }
       }
       ctx.fillStyle = hexA(accent, 0.85);
       ctx.beginPath();
@@ -415,54 +296,12 @@ const FLOOR_ART: Record<RoomTheme, FloorArt> = {
   },
 };
 
-/** Rubber-tile deck for the gym fit-out: a faint tile grid across the whole
- *  alcove floor with the mat's footprint cleared out (the accent platform
- *  stays the hero; the deck reads at the flanks + under the treadmill). */
-export function GymDeck({ accent }: { accent: string }) {
-  const mobile = useIsMobile();
-  const tex = useMemo(() => {
-    // Mobile: half-res backing store + lower anisotropy (finding 6) — the
-    // ctx.scale keeps the drawn grid layout identical, only the texel density
-    // drops (a faint deck grid never resolves above this on a portrait frame).
-    const scale = mobile ? 0.5 : 1;
-    const W = 1024;
-    const H = 512; // maps the 7.9 × 3.95 alcove floor (129.6 px per world unit)
-    const c = document.createElement("canvas");
-    c.width = W * scale;
-    c.height = H * scale;
-    const ctx = c.getContext("2d")!;
-    ctx.scale(scale, scale);
-    ctx.fillStyle = "rgba(14,16,24,0.5)";
-    ctx.fillRect(0, 0, W, H);
-    for (let i = 0; i * 64.8 <= W; i++) {
-      ctx.strokeStyle = i % 4 === 0 ? hexA(accent, 0.22) : "rgba(244,241,234,0.1)";
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(i * 64.8, 0); ctx.lineTo(i * 64.8, H); ctx.stroke();
-      if (i * 64.8 <= H) {
-        ctx.beginPath(); ctx.moveTo(0, i * 64.8); ctx.lineTo(W, i * 64.8); ctx.stroke();
-      }
-    }
-    // clear the mat's footprint (mat centre sits 0.3 world behind this plane's
-    // centre) so the deck never draws over the platform or its glow rim
-    ctx.clearRect(512 - 311, 217 - 240, 622, 480);
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = mobile ? 4 : 8;
-    return t;
-  }, [accent, mobile]);
-  // R4: same dispose contract as useTextTexture — the mobile flip re-mints
-  // the texture and R3F never disposes swapped map props.
-  useEffect(() => () => tex.dispose(), [tex]);
-  return (
-    <mesh position={[0, 0.025, 0.45]} rotation-x={-Math.PI / 2}>
-      <planeGeometry args={[7.9, 3.95]} />
-      <meshBasicMaterial map={tex} transparent toneMapped={false} depthWrite={false} />
-    </mesh>
-  );
-}
-
 export function FloorStory({ theme, accent }: { theme: RoomTheme; accent: string }) {
   const art = FLOOR_ART[theme];
+  return art ? <FloorStoryArt art={art} accent={accent} /> : null;
+}
+
+function FloorStoryArt({ art, accent }: { art: FloorArt; accent: string }) {
   const mobile = useIsMobile();
   const tex = useMemo(() => {
     // Half-res + capped anisotropy on mobile (finding 6); ctx.scale keeps the

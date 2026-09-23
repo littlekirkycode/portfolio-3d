@@ -205,20 +205,56 @@ export const PORTHOLES: { x: number; side: 1 | -1 }[] = (() => {
   return out;
 })();
 
+/* ── camera choreography (Rig reads all of this at its smoothed playhead) ───
+ *
+ * Every slot is laid out in fractions of SLOT, relative to its start s:
+ *
+ *   0 ── gaze turns in ──┐0.33┌──── camera parked ────┐0.67┌── gaze turns out ── 1
+ *                        full   0.35 ··········· 0.65    full
+ *
+ * - The camera PARKS on the exhibit over [HOLD_LO, HOLD_HI] and travels on a
+ *   quintic (smootherstep) curve between parks — zero velocity AND zero
+ *   acceleration at both ends, so arriving/leaving never "clicks".
+ * - The head is fully turned slightly WIDER than the park ([GAZE_FULL_LO,
+ *   GAZE_FULL_HI]): it faces the exhibit just before the camera settles and
+ *   only lets go once the camera has begun to move — never a sideways strafe.
+ * - Turns fill the REST of the slot, so two neighbouring turns meet exactly at
+ *   the slot boundary. When the neighbours sit on OPPOSITE walls (almost every
+ *   pair) the two ramps are quarter-sine halves with matched slopes: together
+ *   they form ONE continuous cosine sweep from one wall, across the corridor
+ *   axis, to the other — no stop-and-go "look ahead" beat, and about half the
+ *   peak angular velocity of the old back-to-back smoothstep turns. Same-wall
+ *   neighbours (gallery → Nuremi) settle to straight-ahead in between instead.
+ * - HOLD_* are mirrored in dwellSettleTarget (the magnetic settle), which
+ *   parks the scroll back inside these holds when a gesture ends mid-corridor.
+ * Dwell CENTRES (s + 0.5*SLOT) and STOP_PROGRESSES are unchanged. */
+const HOLD_LO = 0.35;
+const HOLD_HI = 0.65;
+const GAZE_FULL_LO = 0.33;
+const GAZE_FULL_HI = 0.67;
+/** Lobby showreel hold (progress) — its centre is STOP_PROGRESSES[1] (0.135).
+ *  Was 0.10–0.17: ~11 wheel notches with no camera motion at all read as a
+ *  dead scroll wheel; 0.12–0.15 (~4.5 notches) matches the room parks. */
+const FEATURE_HOLD_LO = 0.12;
+const FEATURE_HOLD_HI = 0.15;
+/** Showreel turn-in window start (airlock → lobby; settles from straight ahead). */
+const FEATURE_TURN_IN = 0.06;
+/** Junction between the showreel's turn-out and room 0's turn-in: centred
+ *  between the two "fully turned" points so both ramps are the same width and
+ *  the +z → −z pan is one continuous sweep (see above). */
+const FEATURE_JUNCTION = (FEATURE_HOLD_HI + ROOM_LO + GAZE_FULL_LO * SLOT) / 2;
+
 // keyframes of (progress → cameraX); a flat "dwell" band sits at each slot.
 type KF = { p: number; x: number };
 const KEYS: KF[] = [{ p: 0, x: START_X }];
 // Showreel dwell: glide in, hold facing the feature screen, then move on.
-KEYS.push({ p: 0.1, x: FEATURE_CAM_X });
-KEYS.push({ p: 0.17, x: FEATURE_CAM_X });
+KEYS.push({ p: FEATURE_HOLD_LO, x: FEATURE_CAM_X });
+KEYS.push({ p: FEATURE_HOLD_HI, x: FEATURE_CAM_X });
 for (let i = 0; i < N_SLOTS; i++) {
   const s = slotStart(i);
   const x = i === GALLERY_SLOT ? GALLERY_X : ROOMS[i < GALLERY_SLOT ? i : i - 1].x;
-  // Wide flat hold = the camera STAYS on each slot. Keep these in sync with
-  // slotEase's dwellLo/dwellHi (0.30 / 0.70). The 0.40*SLOT between a slot's
-  // leave and the next slot's arrive is the visible corridor-travel gap.
-  KEYS.push({ p: s + SLOT * 0.3, x }); // arrive (dwell on slot)
-  KEYS.push({ p: s + SLOT * 0.7, x }); // leave — corridor travel between slots
+  KEYS.push({ p: s + SLOT * HOLD_LO, x }); // arrive (park on the slot)
+  KEYS.push({ p: s + SLOT * HOLD_HI, x }); // leave — corridor travel to the next slot
 }
 KEYS.push({ p: 1, x: END_X });
 
@@ -235,7 +271,7 @@ export const HERO_FADE_START = 0.004;
 /** Dwell-stop progress values for the mobile hop chevrons: airlock, lobby
  *  showreel, every dwell slot centre (9 rooms + the gallery), bridge. Derived
  *  from the same slot math as KEYS so the hops land dead-centre in each hold
- *  band; the showreel value mirrors its KEYS hold (0.10–0.17). */
+ *  band; the showreel value is the centre of its KEYS hold (0.12–0.15). */
 export const STOP_PROGRESSES: number[] = [
   0,
   0.135,
@@ -243,7 +279,14 @@ export const STOP_PROGRESSES: number[] = [
   1,
 ];
 
-const smooth = (t: number) => t * t * (3 - 2 * t);
+const clamp01 = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t);
+/** Quintic smootherstep: zero 1st AND 2nd derivative at both ends. */
+const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+/** Cosine ease-in-out (0→1, zero slope at both ends). */
+const settleIn = (u: number) => 0.5 - 0.5 * Math.cos(Math.PI * u);
+/** Quarter-sine 0→1 that LEAVES its start with slope π/2 (one half of a
+ *  cross-corridor sweep) and arrives with zero slope. */
+const sweepIn = (u: number) => Math.sin((Math.PI / 2) * u);
 
 /** Camera X for a scroll progress — eases between rooms, holds flat at each. */
 export function cameraXAt(p: number): number {
@@ -255,35 +298,117 @@ export function cameraXAt(p: number): number {
     if (p >= a.p && p <= b.p) {
       if (a.x === b.x) return a.x; // dwell
       const t = (p - a.p) / (b.p - a.p);
-      return a.x + (b.x - a.x) * smooth(t);
+      return a.x + (b.x - a.x) * smoother(t);
     }
   }
   return KEYS[KEYS.length - 1].x;
 }
 
-/** Shared dwell-band turn ramp for slot i: 0 → 1 → 0. The turn LEADS arrival —
- *  full focus is reached `lead` before the camera centres, so the head already
- *  faces the exhibit as it slides in (fixes "turns too late"). `ramp` is short
- *  enough to leave ~0.16*SLOT mid-corridor where nothing is focused (you face
- *  straight down the hall = a real walk between slots). The whole band stays
- *  inside [s, s+SLOT], so slot windows tile without overlapping. dwellLo/dwellHi
- *  mirror the KEYS hold band (0.30 / 0.70). */
+/* Glide path: the same stops WITHOUT the parks — a monotone C1 cubic
+ * (Fritsch–Carlson) through (0, START_X), the showreel centre, every ROOM
+ * dwell centre and (1, END_X). Rig blends toward it while a wheel/touch
+ * visitor RUSHES (flick): racing the dwell path makes the camera stop-go at
+ * every exhibit several times a second; the glide just travels. Both paths
+ * agree exactly at every room dwell centre. The gallery is NOT a knot: it
+ * sits only 3 units past Xuabelle (other neighbours are 10–12 apart), and
+ * forcing the spline through it made a flick brake to a crawl there and
+ * surge again after. (Programmatic glides don't use this path at all — Rig
+ * choreographs those directly in x.) */
+const GLIDE: KF[] = [
+  { p: 0, x: START_X },
+  { p: (FEATURE_HOLD_LO + FEATURE_HOLD_HI) / 2, x: FEATURE_CAM_X },
+  ...Array.from({ length: N_SLOTS }, (_, i): KF | null =>
+    i === GALLERY_SLOT
+      ? null
+      : { p: slotStart(i) + SLOT / 2, x: ROOMS[i < GALLERY_SLOT ? i : i - 1].x },
+  ).filter((k): k is KF => k !== null),
+  { p: 1, x: END_X },
+];
+const GLIDE_M: number[] = (() => {
+  const n = GLIDE.length;
+  const d = GLIDE.slice(1).map((b, i) => (b.x - GLIDE[i].x) / (b.p - GLIDE[i].p));
+  const m = GLIDE.map((_, i) =>
+    i === 0 ? d[0] : i === n - 1 ? d[n - 2] : d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2,
+  );
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / d[i];
+    const b = m[i + 1] / d[i];
+    const h = a * a + b * b;
+    if (h > 9) {
+      const t = 3 / Math.sqrt(h);
+      m[i] = t * a * d[i];
+      m[i + 1] = t * b * d[i];
+    }
+  }
+  return m;
+})();
+
+/** Camera X on the park-free glide path (see GLIDE). */
+export function cameraGlideXAt(p: number): number {
+  if (p <= 0) return GLIDE[0].x;
+  if (p >= 1) return GLIDE[GLIDE.length - 1].x;
+  let i = 0;
+  while (i < GLIDE.length - 2 && p > GLIDE[i + 1].p) i++;
+  const a = GLIDE[i];
+  const b = GLIDE[i + 1];
+  const h = b.p - a.p;
+  const t = (p - a.p) / h;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    (2 * t3 - 3 * t2 + 1) * a.x +
+    (t3 - 2 * t2 + t) * h * GLIDE_M[i] +
+    (-2 * t3 + 3 * t2) * b.x +
+    (t3 - t2) * h * GLIDE_M[i + 1]
+  );
+}
+
+/** Wall (±z) that dwell slot i faces. */
+const slotSide = (i: number): number =>
+  i === GALLERY_SLOT ? GALLERY_SIDE : ROOMS[i < GALLERY_SLOT ? i : i - 1].side;
+/** The lobby showreel lives on the +z wall. */
+const FEATURE_SIDE = 1;
+
+/** One focus ramp 0 → 1 → 0 over [inLo, fullLo] / [fullHi, outHi]. `sweepLo`
+ *  / `sweepHi` pick the quarter-sine shape at an end whose neighbour sits on
+ *  the opposite wall (continuous cross-corridor sweep); otherwise the end
+ *  settles with zero slope (a straight-ahead beat). */
+function ramp(
+  p: number,
+  inLo: number,
+  fullLo: number,
+  fullHi: number,
+  outHi: number,
+  sweepLo: boolean,
+  sweepHi: boolean,
+): number {
+  if (p <= inLo || p >= outHi) return 0;
+  if (p < fullLo) {
+    const u = clamp01((p - inLo) / (fullLo - inLo));
+    return sweepLo ? sweepIn(u) : settleIn(u);
+  }
+  if (p > fullHi) {
+    const u = clamp01((outHi - p) / (outHi - fullHi));
+    return sweepHi ? sweepIn(u) : settleIn(u);
+  }
+  return 1;
+}
+
+/** Dwell-band turn ramp for slot i: 0 → 1 → 0 (see the layout comment above
+ *  KEYS). The band stays inside [s, s+SLOT] (slot 0 starts at the showreel
+ *  junction), so slot windows tile without overlapping. */
 function slotEase(p: number, slot: number): number {
   const s = slotStart(slot);
-  const dwellLo = s + SLOT * 0.3;
-  const dwellHi = s + SLOT * 0.7;
-  const lead = SLOT * 0.06;
-  const ramp = SLOT * 0.16;
-  const fullLo = dwellLo - lead;
-  const fullHi = dwellHi + lead;
-  const inLo = fullLo - ramp;
-  const outHi = fullHi + ramp;
-  if (p < inLo || p > outHi) return 0;
-  let e: number;
-  if (p < fullLo) e = (p - inLo) / ramp;
-  else if (p > fullHi) e = (outHi - p) / ramp;
-  else e = 1;
-  return smooth(Math.max(0, Math.min(1, e)));
+  const inLo = slot === 0 ? FEATURE_JUNCTION : s;
+  const side = slotSide(slot);
+  const prevSide = slot === 0 ? FEATURE_SIDE : slotSide(slot - 1);
+  const sweepLo = prevSide !== side;
+  const sweepHi = slot < N_SLOTS - 1 && slotSide(slot + 1) !== side;
+  return ramp(p, inLo, s + SLOT * GAZE_FULL_LO, s + SLOT * GAZE_FULL_HI, s + SLOT, sweepLo, sweepHi);
 }
 
 /** Which room the camera is focusing, and how strongly (0..1), for the glance.
@@ -304,14 +429,189 @@ export function galleryFocusAt(p: number): number {
 }
 
 /** How strongly the camera should turn to face the entrance showreel (0..1).
- *  Mirrors the room-focus ramp but for the lobby feature, in its own progress
- *  band (well before the first room band at ~0.22). */
+ *  Settles in from straight ahead (airlock → lobby), holds over the showreel
+ *  park, then sweeps across the corridor into room 0's turn (its own band,
+ *  ending exactly where room 0's begins). */
 export function featureFocusAt(p: number): number {
-  const inLo = 0.06, fullLo = 0.1, fullHi = 0.16, outHi = 0.2;
-  if (p < inLo || p > outHi) return 0;
-  let e: number;
-  if (p < fullLo) e = (p - inLo) / (fullLo - inLo);
-  else if (p > fullHi) e = (outHi - p) / (outHi - fullHi);
-  else e = 1;
-  return smooth(Math.max(0, Math.min(1, e)));
+  return ramp(
+    p,
+    FEATURE_TURN_IN,
+    FEATURE_HOLD_LO,
+    FEATURE_HOLD_HI,
+    FEATURE_JUNCTION,
+    false,
+    slotSide(0) !== FEATURE_SIDE,
+  );
+}
+
+/* ── parks + magnetic dwell settle ────────────────────────────────────────── */
+
+/** Every park, in order: airlock (a point), showreel, the ten slot holds. */
+const PARKS: [number, number][] = [
+  [0, 0],
+  [FEATURE_HOLD_LO, FEATURE_HOLD_HI],
+  ...Array.from({ length: N_SLOTS }, (_, i): [number, number] => [
+    slotStart(i) + SLOT * HOLD_LO,
+    slotStart(i) + SLOT * HOLD_HI,
+  ]),
+];
+
+/** Index into the park list of the park containing p (camera X is flat
+ *  there), or -1 while the camera is travelling between parks. Rig uses it to
+ *  ignore scroll motion that stays inside one park (no head nod). */
+export function parkIndexAt(p: number): number {
+  for (let i = 0; i < PARKS.length; i++) {
+    const [lo, hi] = PARKS[i];
+    if (p < lo - 1e-4) return -1;
+    if (p <= hi + 1e-4) return i;
+  }
+  return -1;
+}
+
+/** How far INSIDE a park the settle lands (never on the knife-edge where the
+ *  camera starts to travel). */
+const SETTLE_INSET = SLOT * 0.06;
+/** Fraction of a corridor gap the visitor must already have travelled (in
+ *  their direction of travel) before the settle carries them ON into the next
+ *  park. Below it the scroll is left exactly where they put it. */
+const SETTLE_COMMIT = 0.18;
+/** A gesture that CARRIED the scroll at least this far (progress, a little
+ *  over one room gap, i.e. a flick that flew past at least one exhibit) and
+ *  died just past a park is eased BACK into that park when it stopped within
+ *  SETTLE_BACK of the gap: the flick ran out of momentum a hair past a room,
+ *  so the room is where it "landed". Small, careful gestures never qualify,
+ *  so a notch-by-notch walker is never pulled back. */
+export const SETTLE_FLICK_CARRY = SLOT * 1.1;
+const SETTLE_BACK = 0.3;
+
+/** Length (progress) of the corridor gap containing p (the travel between
+ *  two parks), or 0 while parked. Used to scale settle glide durations. */
+export function parkGapAt(p: number): number {
+  for (let i = 0; i < PARKS.length - 1; i++) {
+    const hi = PARKS[i][1];
+    const lo = PARKS[i + 1][0];
+    if (p > hi && p < lo) return lo - hi;
+  }
+  const last = PARKS[PARKS.length - 1][1];
+  return p > last ? BRIDGE_ENTER_P - last : 0;
+}
+
+/**
+ * Where to gently carry the scroll when a gesture ends at progress p after
+ * moving in direction dir, or null to leave it alone. `carried` is how far
+ * (|progress|) the whole gesture moved the page.
+ *
+ * The settle normally only continues the visitor's OWN motion: it lands just
+ * inside the next park in the direction they were scrolling, and only once
+ * they are committed (at least SETTLE_COMMIT of the way across the gap). It
+ * never pulls a careful walker back toward the park they left: repeated
+ * small gestures simply add up until the commit point, then the last stretch
+ * is completed for them. The one exception is a long flick (carried at least
+ * SETTLE_FLICK_CARRY) that died just past a park: that eases back a few
+ * notches' worth into the park it overshot (see SETTLE_FLICK_CARRY).
+ * Null when already parked, on the hero/airlock doors, or out on the bridge
+ * run (forward travel past the last exhibit belongs to the contact panel).
+ */
+export function dwellSettleTarget(p: number, dir: 1 | -1, carried = 0): number | null {
+  if (p < 0.03) return null; // hero / airlock doors: leave the visitor be
+  const flick = carried >= SETTLE_FLICK_CARRY;
+  for (let i = 0; i < PARKS.length; i++) {
+    const [lo, hi] = PARKS[i];
+    if (p >= lo - 1e-4 && p <= hi + 1e-4) return null; // already parked
+    const next = PARKS[i + 1];
+    const backInto = Math.max(hi - SETTLE_INSET, (lo + hi) / 2);
+    if (!next) {
+      // Past the last exhibit: walking BACK from the bridge run is completed
+      // into the last park once committed; forward is left alone.
+      if (dir > 0) return null;
+      const f = (p - hi) / (BRIDGE_ENTER_P - hi);
+      return f > 0 && f < 1 - SETTLE_COMMIT ? backInto : null;
+    }
+    if (p > hi && p < next[0]) {
+      const f = (p - hi) / (next[0] - hi);
+      const aheadInto = Math.min(next[0] + SETTLE_INSET, (next[0] + next[1]) / 2);
+      if (dir > 0) {
+        if (flick && f < SETTLE_BACK && i > 0) return backInto;
+        return f >= SETTLE_COMMIT ? aheadInto : null;
+      }
+      if (flick && 1 - f < SETTLE_BACK) return aheadInto;
+      return 1 - f >= SETTLE_COMMIT ? backInto : null;
+    }
+  }
+  return null;
+}
+
+/** Nearest park landing in direction dir from p, ignoring commitment. Used to
+ *  land nav jumps on a composed view. Null when p is already parked. */
+export function nearestParkAhead(p: number, dir: 1 | -1): number | null {
+  for (let i = 0; i < PARKS.length; i++) {
+    const [lo, hi] = PARKS[i];
+    if (p >= lo - 1e-4 && p <= hi + 1e-4) return null;
+    const next = PARKS[i + 1];
+    if (!next) return dir < 0 ? Math.max(hi - SETTLE_INSET, (lo + hi) / 2) : null;
+    if (p > hi && p < next[0]) {
+      return dir > 0
+        ? Math.min(next[0] + SETTLE_INSET, (next[0] + next[1]) / 2)
+        : Math.max(hi - SETTLE_INSET, (lo + hi) / 2);
+    }
+  }
+  return null;
+}
+
+/** Continuous "stop coordinate" of progress p: 0 at the airlock, 1 at the
+ *  showreel, 2..11 at the dwell-slot centres, 12 at the bridge, linear in
+ *  between. Distances in it count exhibits, not raw progress: the lobby hops
+ *  (0 to 0.135 to 0.25) are one stop each just like a room-to-room hop, so
+ *  Rig can tell a one-stop hop from a long trip anywhere on the walk. */
+export function stopCoord(p: number): number {
+  const s = STOP_PROGRESSES;
+  if (p <= s[0]) return 0;
+  for (let i = 1; i < s.length; i++) {
+    if (p <= s[i]) return i - 1 + (p - s[i - 1]) / (s[i] - s[i - 1]);
+  }
+  return s.length - 1;
+}
+
+/** Exhibits between two progress values (see stopCoord). */
+export const stopsBetween = (a: number, b: number) => Math.abs(stopCoord(a) - stopCoord(b));
+
+/** Progress spacing of the stops around p (for speed-in-stops estimates). */
+export function stopSpacingAt(p: number): number {
+  const s = STOP_PROGRESSES;
+  for (let i = 1; i < s.length; i++) if (p <= s[i]) return s[i] - s[i - 1];
+  return s[s.length - 1] - s[s.length - 2];
+}
+
+/**
+ * Inverse of cameraXAt restricted to the progress range between `from` and
+ * `to` (either order): the progress at which the camera, travelling from
+ * `from` toward `to`, reaches world x. Where the path is flat (a park) it
+ * returns the park edge the camera LEAVES from, or the destination itself, so
+ * a glide that starts parked leaves at once and one that ends parked ends
+ * exactly on `to`. cameraXAt is monotone non-decreasing, so bisection is exact.
+ */
+export function progressAtCameraX(x: number, from: number, to: number): number {
+  const fwd = to >= from;
+  let lo = fwd ? from : to;
+  let hi = fwd ? to : from;
+  if (fwd) {
+    // sup { q in [from, to] : X(q) <= x }
+    if (cameraXAt(hi) <= x) return hi;
+    if (cameraXAt(lo) > x) return lo;
+    for (let k = 0; k < 32; k++) {
+      const m = (lo + hi) / 2;
+      if (cameraXAt(m) <= x) lo = m;
+      else hi = m;
+    }
+    return lo;
+  }
+  // inf { q in [to, from] : X(q) >= x }
+  if (cameraXAt(lo) >= x) return lo;
+  if (cameraXAt(hi) < x) return hi;
+  for (let k = 0; k < 32; k++) {
+    const m = (lo + hi) / 2;
+    if (cameraXAt(m) >= x) hi = m;
+    else lo = m;
+  }
+  return hi;
 }

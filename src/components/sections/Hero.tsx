@@ -4,12 +4,11 @@ import { useEffect, useRef } from "react";
 import { SITE } from "@/lib/constants";
 import { scrollRefs } from "@/lib/scrollStore";
 import { HERO_FADE_START } from "@/components/canvas/hallConfig";
-import ScrollCue from "@/components/ui/ScrollCue";
 import HudFrame from "@/components/ui/HudFrame";
 
 /**
- * Opening panel — one compact HUD card (name, role, crew line) low-left and a
- * scroll cue. The airlock door art behind it (KIRKHAM·01 stencil, hazard band,
+ * Opening panel — one compact glass card (name, role, crew line) low-left;
+ * the scroll cue lives in the bottom dock's context slot. The airlock door art behind it (KIRKHAM·01 stencil, hazard band,
  * status lamp) IS the hero image, so the type stays out of its way: no
  * oversized name doubling the stencil, and the whole overlay fades out over
  * the first beat of scroll (p 0.004→0.024) so the doors open in the clear.
@@ -44,36 +43,31 @@ export default function Hero() {
       id="hero"
       tabIndex={-1}
       /* min-h-svh (small viewport): with the mobile URL bar visible, 100vh used
-         to push the scroll cue below the first-paint fold. */
-      className="relative flex min-h-svh w-full shrink-0 flex-col justify-end px-[8vw] pb-[18vh] pt-24 outline-none desktop:h-screen desktop:w-screen"
+         to push the card below the first-paint fold. pb clears the bottom
+         dock (context row + rail) at every height. */
+      className="relative flex min-h-svh w-full shrink-0 flex-col justify-end px-[var(--ui-gutter)] pb-[max(15vh,128px)] pt-24 outline-none desktop:h-screen desktop:w-screen desktop:pb-[max(17vh,132px)]"
     >
       <div ref={fadeRef}>
         <div
-          className="w-fit max-w-md"
-          style={{ animation: "hero-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both" }}
+          className="w-full max-w-[21.5rem] desktop:max-w-[27rem]"
+          style={{ animation: "hero-rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both" }}
         >
-          <HudFrame className="bg-bg/55 px-6 py-5 backdrop-blur-sm">
-            <h1 className="font-display text-4xl leading-none tracking-[-0.01em] text-ink md:text-5xl">
+          <HudFrame solid className="px-5 pb-4 pt-5 desktop:px-7 desktop:pb-5 desktop:pt-6">
+            <p className="ui-kicker ui-kicker--dash">Crew manifest</p>
+            <h1 className="mt-4 whitespace-nowrap font-display text-h2 tracking-[-0.01em] text-ink">
               {SITE.name}
-              <span className="text-accent">.</span>
+              <span style={{ color: "var(--hud-accent)" }}>.</span>
             </h1>
-            <p className="mt-3 text-lg leading-relaxed text-ink-dim">
-              <span className="text-ink">{SITE.role}</span>
-              <br />
-              {SITE.location}
-            </p>
-            <p className="mt-3 border-t border-line pt-3 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-dim">
-              CREW: 1 — does everything
-            </p>
+            <p className="mt-3 text-lead text-ink">{SITE.role}</p>
+            <p className="mt-1 text-body-s text-ink-2">{SITE.location}</p>
+            <div className="mt-4 flex items-center justify-between gap-4 border-t border-line pt-4 desktop:mt-5">
+              <span className="ui-kicker">Crew 1 — does everything</span>
+              <span aria-hidden className="ui-kicker hidden gap-2 text-ink-2 desktop:inline-flex">
+                <span className="ui-dot ui-breathe" />
+                Aboard
+              </span>
+            </div>
           </HudFrame>
-        </div>
-
-        {/* Scroll cue */}
-        <div
-          className="absolute bottom-[7vh] left-[8vw]"
-          style={{ animation: "hero-fade 0.8s ease-out 1s both" }}
-        >
-          <ScrollCue label="Scroll" />
         </div>
       </div>
     </section>

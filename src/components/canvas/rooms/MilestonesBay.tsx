@@ -1,48 +1,56 @@
 "use client";
 
-import { Model, SpinY } from "../ModelLoader";
-import { Plinth, d2r, type BayProps } from "./shared";
+import { SpinY } from "../ModelLoader";
+import { type BayProps } from "./shared";
 import MilestonesRoom from "./MilestonesRoom";
+import { Trophy, useFameMats } from "./milestones/kit";
+import { Podium, useFameAtlas } from "./milestones/Podium";
+import { Vitrine } from "./milestones/Vitrine";
+import { Dais, DAIS_H } from "./milestones/Dais";
+import { WallPanels } from "./milestones/WallPanels";
 
-/** Milestones bay — the complete room composition (installation + props).
- *  Milestones — podium hero fully LEFT of the hero card; sports cup centred on the gold mat */
-export default function MilestonesBay({ accent, animate }: BayProps) {
+/** Milestones bay — a hall of fame.
+ *  HERO: the numbers podium (1.3M+ / 100K / 72K in gilt on the risers, a
+ *  laurel on the top step) standing on a round honed-stone dais laid over the
+ *  bay mat. Supporting, in the left column: the turned-gold cup in a lit
+ *  museum vitrine (back) and the Founders Uni medal hung on its stand
+ *  (front). Gold only ever appears as real metal or gilt lettering; the
+ *  hero is lacquered hull navy + black stone, the supports honed grey stone. The cup's slow turn is the
+ *  room's only motion and freezes under reduced motion. */
+export default function MilestonesBay({ accent, animate, mobile }: BayProps) {
+  const m = useFameMats(accent);
+  const atlas = useFameAtlas();
   return (
-      <group>
-        {/* the whole podium lives left of the hero card's rays (at x −0.5 the
-            cup covered the end of the card's title from the dwell camera) */}
-        <group position={[-2.8, 0, -0.7]}>
-          {/* wide flat step under the main plinth for a podium feel */}
-          <mesh position={[0, 0.06, 0]}>
-            <boxGeometry args={[1.6, 0.12, 1.6]} />
-            <meshStandardMaterial color="#2c2f38" roughness={0.4} metalness={0.6} />
-          </mesh>
-          <group position={[0, 0.12, 0]}>
-            <Plinth h={1.15} accent={accent}>
-              <SpinY speed={0.2} animate={animate}>
-                <Model name="trophy" height={0.95} />
-              </SpinY>
-            </Plinth>
-          </group>
+    <group>
+      <Dais m={m} />
+      {/* brass picture rail on the left wall above the two exhibits (off-frame on phones) */}
+      {!mobile && (
+        <group position-x={-3.68} rotation-y={Math.PI / 2}>
+          <WallPanels m={m} />
         </group>
-        {/* 1st/2nd/3rd mini-podium ON the gold mat — fills the circle with a
-            real "wins" motif while staying LOW: anything on this centre disc
-            taller than ~0.9 world units crosses the hero card (left) or info
-            panel (right) in screen space from the dwell camera */}
-        <group position={[-0.2, 0, 0.55]} rotation={[0, d2r(12), 0]}>
-          {([[0, 0.26, 0], [-0.62, 0.17, 1], [0.62, 0.1, 2]] as const).map(([px, h, i]) => (
-            <mesh key={i} position={[px, h / 2, 0]}>
-              <boxGeometry args={[0.58, h, 0.58]} />
-              <meshStandardMaterial color={i === 0 ? "#3a3325" : "#2c2f38"} roughness={0.45} metalness={0.6} />
-            </mesh>
-          ))}
-          <group position={[0, 0.26, 0]}>
-            <SpinY speed={0.3} animate={animate}>
-              <Model name="sportstrophy" height={0.62} rotation={[0, d2r(24), 0]} />
-            </SpinY>
-          </group>
-        </group>
-        <MilestonesRoom accent={accent} />
+      )}
+
+      {/* hero — on the dais; the low-seated laurel stays below the hero
+          screen's bottom bezel.
+          Mobile: the portrait camera steps in and the panel stacks over the
+          centre, so the podium comes forward + down-scaled to sit BELOW it. */}
+      <group position={mobile ? [0, DAIS_H, 1.78] : [-0.3, DAIS_H, 0.55]} scale={mobile ? 0.38 : 1}>
+        <Podium m={m} tex={atlas} laurel={!mobile} />
       </group>
+
+      {/* the cup, in its vitrine — left column, back */}
+      <group position={[-2.62, 0, -0.55]} rotation-y={0.3} scale={1.34}>
+        <Vitrine m={m} tex={atlas}>
+          <SpinY speed={0.16} animate={animate}>
+            <Trophy m={m} />
+          </SpinY>
+        </Vitrine>
+      </group>
+
+      {/* the Founders Uni medal on its stand — left column, front, turned to the dwell camera */}
+      <group position={[-2.86, 0, 1.44]} rotation-y={0.42} scale={1.12}>
+        <MilestonesRoom m={m} tex={atlas} />
+      </group>
+    </group>
   );
 }

@@ -5,7 +5,25 @@ import Lenis from "lenis";
 import { gsap, ScrollTrigger, registerGsap } from "@/lib/gsap";
 import { scrollRefs, pointerRefs, useScrollStore } from "@/lib/scrollStore";
 import { DESKTOP_MEDIA_QUERY, MOBILE_MEDIA_QUERY } from "@/lib/useIsMobile";
-import { BRIDGE_ENTER_P } from "@/components/canvas/hallConfig";
+import {
+  BRIDGE_ENTER_P,
+  SETTLE_FLICK_CARRY,
+  STOP_PROGRESSES,
+  dwellSettleTarget,
+  nearestParkAhead,
+  parkGapAt,
+} from "@/components/canvas/hallConfig";
+
+/** Sine ease-in-out: leaves and arrives at rest, and peaks at only ~1.57x its
+ *  average speed (cubic in-out peaked at 3x, Lenis's stock expo-OUT launches
+ *  at ~7x). Every programmatic page glide uses it; the 3D camera is
+ *  choreographed separately over the same duration (Rig, scrollRefs.glide). */
+const easeInOutSine = (t: number) => 0.5 - 0.5 * Math.cos(Math.PI * t);
+/** Glide time for a programmatic trip of `frac` of the corridor: ~1.5 s for a
+ *  one-stop hop (a 180 deg cross-corridor head turn needs about that to stay
+ *  under ~200 deg/s) up to 2.4 s for the whole walk. The scrollTo wrapper
+ *  raises any external caller's shorter duration to this. */
+const tripDuration = (frac: number) => 1.45 + Math.min(0.95, Math.abs(frac) * 1.4);
 
 /**
  * Fully-horizontal scroll engine.
@@ -64,12 +82,112 @@ export default function SmoothScrollProvider({
     };
     // gestureOrientation "both" lets Lenis natively fold horizontal trackpad
     // (deltaX) gestures into its single scroll, which we map to the X translate.
+    //
+    // NO `easing`/`duration` here: in Lenis 1.3 either one makes EVERY wheel
+    // event restart a fixed-length tween from rest (a single notch moved 0 px
+    // in the first 100 ms and trackpad streams piled up into a late lurch).
+    // Wheel/trackpad keep the frame-rate independent lerp; programmatic
+    // glides get cubic in-out via the scrollTo wrapper below.
+    //
+    // Reduced motion: no wheel inertia either — the page (and the camera,
+    // which Rig maps 1:1 under reduced motion) moves exactly as far as the
+    // wheel says, and stops when it stops.
+    const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const lenis = new Lenis({
       lerp: 0.1,
-      smoothWheel: true,
+      smoothWheel: !prefersReduced,
       wheelMultiplier: 1,
       gestureOrientation: "both",
     });
+
+    // Scroll px → corridor progress (desktop: the pin trigger's range; mobile:
+    // the measured limit). Set by each matchMedia branch below.
+    let pxToProgress = (px: number) => (lenis.limit > 0 ? px / lenis.limit : 0);
+    let progressToPx = (p: number): number | null => (lenis.limit > 0 ? p * lenis.limit : null);
+
+    // ── scrollTo wrapper (instance-level, so Lenis's own internal calls and
+    //    every external caller — MobileStops, deep links, harnesses — pass
+    //    through it) ──
+    //  - a glide given a `duration` but no `easing` gets sine in-out instead
+    //    of Lenis's expo-out lurch, and at least tripDuration();
+    //  - the END of a programmatic glide is remembered, so Rig can tell a
+    //    one-stop hop from a long trip (scrollRefs.destination). Lenis itself
+    //    overwrites targetScroll with the animated value during such glides.
+    //  - under REDUCED MOTION every programmatic glide becomes a cut
+    //    (immediate): Rig maps the camera 1:1 to scroll there, so an animated
+    //    nav jump / hop was a whip pan down the whole corridor;
+    //  - every cut bumps scrollRefs.cutSeq, so Rig cuts too instead of
+    //    guessing from speed (a frame hitch could make a teleport look slow);
+    //  - a glide with a fixed duration is published (scrollRefs.glide) so Rig
+    //    can choreograph the camera across exactly the same time.
+    type ScrollToOpts = NonNullable<Parameters<Lenis["scrollTo"]>[1]>;
+    const reducedMq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let glideDest: number | null = null;
+    /** Set while the provider itself issues a glide with an exact duration
+     *  (the dwell settle), so the minimum trip duration isn't imposed. */
+    let exactDuration = false;
+    const lenisScrollTo = lenis.scrollTo.bind(lenis);
+    lenis.scrollTo = (target: Parameters<Lenis["scrollTo"]>[0], opts: ScrollToOpts = {}) => {
+      const o: ScrollToOpts = { ...opts };
+      const blocked = (lenis.isStopped || lenis.isLocked) && !o.force;
+      if (o.programmatic !== false && !o.immediate && reducedMq.matches) {
+        o.immediate = true;
+        delete o.duration;
+        delete o.easing;
+        delete o.lerp;
+      }
+      const dest =
+        typeof target === "number"
+          ? Math.min(Math.max(target + (o.offset ?? 0), 0), lenis.limit)
+          : null;
+      if (o.immediate) {
+        glideDest = null;
+        scrollRefs.gliding = false;
+        if (!blocked && (dest === null || Math.abs(dest - lenis.animatedScroll) > 1)) {
+          scrollRefs.cutSeq++;
+        }
+      } else if (o.programmatic !== false && dest !== null) {
+        if (typeof o.duration === "number") {
+          const from = pxToProgress(lenis.animatedScroll);
+          const to = pxToProgress(dest);
+          if (!exactDuration) o.duration = Math.max(o.duration, tripDuration(to - from));
+          if (typeof o.easing !== "function") o.easing = easeInOutSine;
+          // Re-targeted mid-glide (a second hop / paging press): start the
+          // new glide at the page's CURRENT speed instead of from rest, so
+          // the page doesn't stop dead and re-accelerate. A cubic Hermite
+          // term with slope k at t=0 that vanishes (value and slope) at t=1.
+          const dist = dest - lenis.animatedScroll;
+          if (glideDest !== null && lenis.isScrolling === "smooth" && Math.abs(dist) > 1) {
+            const k = Math.min(2, Math.max(0, (pageV * o.duration) / dist));
+            if (k > 0.01) {
+              const base = o.easing;
+              o.easing = (t: number) => base(t) + k * t * (1 - t) * (1 - t);
+            }
+          }
+          if (!blocked && Math.abs(dest - lenis.animatedScroll) > 0.5) {
+            const g = scrollRefs.glide;
+            g.seq++;
+            g.from = from;
+            g.to = Math.min(1, Math.max(0, to));
+            g.t0 = performance.now();
+            g.dur = o.duration;
+          }
+        }
+        if (!blocked) {
+          glideDest = dest;
+          scrollRefs.gliding = true;
+        }
+        const done = o.onComplete;
+        o.onComplete = (l: Lenis) => {
+          if (glideDest === dest) glideDest = null;
+          done?.(l);
+        };
+      } else {
+        glideDest = null;
+        scrollRefs.gliding = false;
+      }
+      lenisScrollTo(target, o);
+    };
     // Expose for debugging / programmatic scroll (e.g. screenshot tooling).
     (window as unknown as { __lenis?: Lenis }).__lenis = lenis;
 
@@ -118,9 +236,240 @@ export default function SmoothScrollProvider({
       }
     });
 
-    const tick = (time: number) => lenis.raf(time * 1000);
+    // Page speed (px/s), for velocity-matched re-targeted glides.
+    let pageV = 0;
+    let lastTickT = 0;
+    let lastTickScroll = 0;
+    const tick = (time: number) => {
+      lenis.raf(time * 1000);
+      const tNow = performance.now();
+      const tdt = (tNow - lastTickT) / 1000;
+      if (lastTickT > 0 && tdt > 0 && tdt < 0.25) {
+        pageV = (lenis.animatedScroll - lastTickScroll) / tdt;
+      }
+      lastTickT = tNow;
+      lastTickScroll = lenis.animatedScroll;
+      // Where the scroll is headed (frame-data ref, read by Rig).
+      if (glideDest !== null && lenis.isScrolling !== "smooth") glideDest = null;
+      const d = pxToProgress(glideDest ?? lenis.targetScroll);
+      scrollRefs.destination = Number.isFinite(d) ? Math.min(1, Math.max(0, d)) : scrollRefs.progress;
+      scrollRefs.gliding = glideDest !== null;
+    };
     gsap.ticker.add(tick);
     gsap.ticker.lagSmoothing(0);
+
+    // ── Magnetic dwell settle ──
+    // When a wheel/trackpad or touch gesture ends MID-CORRIDOR, having
+    // travelled at least SETTLE_COMMIT of the way toward the next exhibit,
+    // glide the rest of the way into that exhibit's park (hallConfig
+    // dwellSettleTarget). Rules that keep it from ever fighting the visitor:
+    //  - it only ever CONTINUES the gesture: onward in the direction the
+    //    gesture actually moved the page (net, from where it started), never
+    //    back toward the park just left — short of the commit point the page
+    //    is left exactly where the visitor put it, so repeated small gestures
+    //    simply add up;
+    //  - armed only by a real wheel/touch gesture — never by keyboard, the
+    //    scrollbar, nav jumps, deep links or its own motion;
+    //  - fires only once the gesture is over: no input for SETTLE_IDLE_MS
+    //    (longer than a careful visitor's gap between notches), no finger
+    //    down, and Lenis's wheel easing / touch momentum finished;
+    //  - ANY new input cancels it instantly (Lenis is reset so the visitor's
+    //    own scroll continues from wherever the glide had reached);
+    //  - off under reduced motion, while Lenis is stopped (dossier overlay)
+    //    or the menu is open, on the hero and forward along the bridge run.
+    const SETTLE_IDLE_MS = 600;
+    const SETTLE_QUIET_MS = 160;
+    const SETTLE_HANDOFF_PX = 12;
+    /** A gesture must move the page at least this far (progress) to count. */
+    const SETTLE_MIN_MOVE = 0.003;
+    let lastScrollEvent = 0;
+    lenis.on("scroll", () => {
+      lastScrollEvent = performance.now();
+    });
+    let settleArmed = false;
+    let settling = false;
+    let touching = false;
+    let lastInput = 0;
+    /** Progress where the current gesture began (null = no gesture open). */
+    let gestureStartP: number | null = null;
+    let settleRaf = 0;
+    const cancelSettle = () => {
+      if (settling) {
+        settling = false;
+        glideDest = null;
+        // Lenis.reset() (typed private, public at runtime — it is what Lenis
+        // itself calls on middle-click / stop()) halts the glide and re-bases
+        // target = actual scroll, without the stop()/start() class churn.
+        (lenis as unknown as { reset: () => void }).reset();
+      }
+    };
+    const trySettle = () => {
+      settleRaf = 0;
+      if (!settleArmed) return;
+      const now = performance.now();
+      // "At rest" = no input for SETTLE_IDLE_MS, no finger down, no Lenis
+      // wheel easing in flight, and no scroll event (touch momentum) for
+      // SETTLE_QUIET_MS. Lenis's own isScrolling can stay "native" forever
+      // after a zero-velocity native event, so it is not trusted for that.
+      const easing = lenis.isScrolling === "smooth";
+      const easingBusy =
+        easing && Math.abs(lenis.targetScroll - lenis.animatedScroll) > SETTLE_HANDOFF_PX;
+      const momentumBusy = !easing && now - lastScrollEvent < SETTLE_QUIET_MS;
+      if (touching || now - lastInput < SETTLE_IDLE_MS || easingBusy || momentumBusy) {
+        settleRaf = requestAnimationFrame(trySettle);
+        return;
+      }
+      settleArmed = false;
+      const start = gestureStartP;
+      gestureStartP = null;
+      if (reducedMq.matches || lenis.isStopped || useScrollStore.getState().menuOpen) return;
+      if (start === null) return;
+      const p = scrollRefs.progress;
+      const moved = p - start;
+      if (Math.abs(moved) < SETTLE_MIN_MOVE) return;
+      const carried = Math.abs(moved);
+      const target = dwellSettleTarget(p, moved > 0 ? 1 : -1, carried);
+      if (target === null) return;
+      // Belt and braces: never move against a careful gesture (only a long
+      // flick that died just past a park may ease back into it).
+      if (Math.sign(target - p) !== Math.sign(moved) && carried < SETTLE_FLICK_CARRY) return;
+      const px = progressToPx(target);
+      if (px === null) return;
+      const dist = Math.abs(target - p);
+      const gap = Math.max(parkGapAt(p), 1e-3);
+      settling = true;
+      exactDuration = true;
+      lenis.scrollTo(px, {
+        // Scaled by how much of the gap (and so of the head turn) is left:
+        // ~0.6 s for the last notch, up to ~1.5 s for most of a gap.
+        duration: 0.55 + 1.0 * Math.min(1, dist / gap),
+        easing: easeInOutSine,
+        onComplete: () => {
+          settling = false;
+        },
+      });
+      exactDuration = false;
+    };
+    /** Input seen. `open` (wheel, finger down) starts a new gesture after
+     *  SETTLE_IDLE_MS of quiet; a finger LIFT only closes the one it began. */
+    const arm = (open: boolean) => {
+      const now = performance.now();
+      if (open && (gestureStartP === null || now - lastInput > SETTLE_IDLE_MS)) {
+        gestureStartP = scrollRefs.progress;
+      }
+      lastInput = now;
+      settleArmed = true;
+      if (!settleRaf) settleRaf = requestAnimationFrame(trySettle);
+    };
+    // Capture phase on window: runs BEFORE Lenis's own wheel listener, so a
+    // cancelled glide hands Lenis a fresh target to add the delta to.
+    const onWheelInput = (e: WheelEvent) => {
+      cancelSettle();
+      if (e.ctrlKey) return; // pinch-zoom
+      const el = e.target as Element | null;
+      if (el?.closest?.("[data-lenis-prevent],[data-lenis-prevent-wheel]")) return;
+      arm(true);
+    };
+    const onTouchStart = () => {
+      touching = true;
+      cancelSettle();
+      arm(true);
+    };
+    const onTouchEnd = () => {
+      touching = false;
+      arm(false);
+    };
+    const onOtherInput = () => {
+      cancelSettle();
+      settleArmed = false;
+      gestureStartP = null;
+    };
+    window.addEventListener("wheel", onWheelInput, { capture: true, passive: true });
+    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    window.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { capture: true, passive: true });
+    window.addEventListener("keydown", onOtherInput, { capture: true });
+    window.addEventListener("pointerdown", onOtherInput, { capture: true, passive: true });
+
+    // ── Keyboard scrolling through Lenis (desktop) ──
+    // Native PageDown/Space/arrows jump the page ~900 px in ONE frame, which
+    // the camera can only answer with a snap. Route them through Lenis: the
+    // arrows/paging keys ease with the same lerp as the wheel (repeated
+    // presses accumulate smoothly); Home/End glide like a nav jump. Keys that
+    // belong to a focused control (text fields, sliders, buttons for Space)
+    // or an overlay that stopped Lenis are left to the browser.
+    const KEY_SKIP =
+      'input,textarea,select,[contenteditable],[role="slider"],[role="listbox"],' +
+      '[role="menu"],[role="tablist"],[role="dialog"],[data-lenis-prevent],video,audio';
+    const onKeyScroll = (e: KeyboardEvent) => {
+      // Reduced motion keeps the browser's instant native paging (Rig maps
+      // the camera 1:1 to scroll there anyway).
+      if (mobileMode || reducedMq.matches) return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (lenis.isStopped || useScrollStore.getState().menuOpen || !(lenis.limit > 0)) return;
+      const el = e.target instanceof HTMLElement ? e.target : null;
+      if (el && (el.isContentEditable || el.closest(KEY_SKIP))) return;
+      const page = window.innerHeight * 0.85;
+      let delta = 0;
+      let step: 1 | -1 | 0 = 0;
+      let to: number | null = null;
+      switch (e.key) {
+        case "ArrowDown":
+        case "ArrowRight":
+          delta = 90;
+          break;
+        case "ArrowUp":
+        case "ArrowLeft":
+          delta = -90;
+          break;
+        case "PageDown":
+          step = 1;
+          break;
+        case "PageUp":
+          step = -1;
+          break;
+        case " ":
+        case "Spacebar":
+          if (el?.closest('button,a[href],summary,label,[role="button"]')) return;
+          step = e.shiftKey ? -1 : 1;
+          break;
+        case "Home":
+          to = 0;
+          break;
+        case "End":
+          to = lenis.limit;
+          break;
+        default:
+          return;
+      }
+      if (step !== 0) {
+        // Paging keys = one exhibit per press: a choreographed glide to the
+        // next / previous dwell stop (a page-sized lerp used to strand the
+        // camera just short of a park with the head still 30 deg off).
+        // Counted from where a glide already in flight is HEADED, so
+        // repeated presses queue stop after stop.
+        const base = scrollRefs.gliding ? scrollRefs.destination : scrollRefs.progress;
+        const stop =
+          step > 0
+            ? STOP_PROGRESSES.find((q) => q > base + 0.004)
+            : [...STOP_PROGRESSES].reverse().find((q) => q < base - 0.004);
+        const px = stop === undefined ? null : progressToPx(stop);
+        if (px === null) {
+          delta = step * page;
+        } else {
+          to = px;
+        }
+      }
+      e.preventDefault();
+      if (to !== null) {
+        lenis.scrollTo(to, { duration: tripDuration((to - lenis.scroll) / lenis.limit) });
+      } else {
+        // programmatic:false = a user gesture: Lenis keeps targetScroll as the
+        // real destination, so held/repeated keys add up like wheel notches.
+        lenis.scrollTo(lenis.targetScroll + delta, { programmatic: false, lerp: 0.1 });
+      }
+    };
+    window.addEventListener("keydown", onKeyScroll);
 
     let sectionOffsets: number[] = [];
     let lastIndex = -1;
@@ -142,7 +491,10 @@ export default function SmoothScrollProvider({
           start: "top top",
           end: () => `+=${distance()}`,
           pin: true,
-          scrub: 1,
+          // Lenis already smooths the scroll; a long scrub tail (was 1 s)
+          // left the hero/contact panels creeping on after the camera had
+          // parked. 0.5 s keeps them in step with the camera's spring.
+          scrub: 0.5,
           invalidateOnRefresh: true,
           onRefresh: () => {
             const panels = gsap.utils.toArray<HTMLElement>("[data-section]", track);
@@ -164,10 +516,35 @@ export default function SmoothScrollProvider({
         },
       });
 
+      // Corridor progress <-> page scroll under the pin (the trigger's range).
+      const st = tween.scrollTrigger!;
+      pxToProgress = (px) => {
+        const span = st.end - st.start;
+        return span > 0 ? (px - st.start) / span : 0;
+      };
+      progressToPx = (p) => {
+        const span = st.end - st.start;
+        return span > 0 ? st.start + p * span : null;
+      };
+
       // Expose click-to-section scrolling (maps 1:1 to vertical scroll under the pin).
       const goToSection = (index: number) => {
-        const target = sectionOffsets[index] ?? 0;
-        lenis.scrollTo(target, { duration: 1.4 });
+        let target = sectionOffsets[index] ?? 0;
+        // A section's left edge can land mid-corridor (The Work starts at
+        // p≈0.094, just short of the showreel park): land on the park
+        // instead, so a nav jump always ends on a composed view.
+        const p = pxToProgress(target);
+        // Always the first park AT OR AFTER the section's start, whichever way
+        // the trip runs (travelling back, dir -1 landed The Work on the
+        // airlock / hero).
+        const park = nearestParkAhead(p, 1);
+        const parkPx = park === null ? null : progressToPx(park);
+        if (parkPx !== null) target = parkPx;
+        // Longer trips get a little more time (~1.5 s to 2.4 s across the
+        // whole walk); Rig choreographs the camera over the same duration and
+        // looks down the corridor on long trips.
+        const frac = lenis.limit > 0 ? (target - lenis.scroll) / lenis.limit : 0;
+        lenis.scrollTo(target, { duration: tripDuration(frac), easing: easeInOutSine });
       };
       setScrollToSection(goToSection);
 
@@ -207,6 +584,8 @@ export default function SmoothScrollProvider({
 
       setReady(true);
       return () => {
+        pxToProgress = (px) => (lenis.limit > 0 ? px / lenis.limit : 0);
+        progressToPx = (p) => (lenis.limit > 0 ? p * lenis.limit : null);
         track.removeEventListener("focusin", onFocusIn);
         tween.scrollTrigger?.kill();
         tween.kill();
@@ -226,6 +605,8 @@ export default function SmoothScrollProvider({
         );
       };
       measureLimit();
+      pxToProgress = (px) => (mobileLimit > 0 ? px / mobileLimit : 0);
+      progressToPx = (p) => (mobileLimit > 0 ? p * mobileLimit : null);
       // seed once in case the user hasn't scrolled yet
       publishProgress(mobileLimit > 0 ? Math.min(1, lenis.scroll / mobileLimit) : 0);
       const measure = () => {
@@ -297,11 +678,19 @@ export default function SmoothScrollProvider({
       setScrollToSection((index: number) => {
         const sections = gsap.utils.toArray<HTMLElement>("[data-section]");
         const el = sections[index];
-        if (el) lenis.scrollTo(el, { duration: 1.2 });
+        if (!el) return;
+        const top = Math.min(
+          Math.max(0, el.getBoundingClientRect().top + lenis.scroll),
+          lenis.limit,
+        );
+        const frac = mobileLimit > 0 ? (top - lenis.scroll) / mobileLimit : 0;
+        lenis.scrollTo(top, { duration: tripDuration(frac), easing: easeInOutSine });
       });
       setReady(true);
       return () => {
         mobileMode = false;
+        pxToProgress = (px) => (lenis.limit > 0 ? px / lenis.limit : 0);
+        progressToPx = (p) => (lenis.limit > 0 ? p * lenis.limit : null);
         disposed = true;
         window.clearTimeout(settleTimer);
         window.removeEventListener("resize", onResize);
@@ -320,6 +709,14 @@ export default function SmoothScrollProvider({
     return () => {
       window.removeEventListener("pointermove", onPointer);
       window.removeEventListener("load", refresh);
+      window.removeEventListener("wheel", onWheelInput, { capture: true });
+      window.removeEventListener("touchstart", onTouchStart, { capture: true });
+      window.removeEventListener("touchend", onTouchEnd, { capture: true });
+      window.removeEventListener("touchcancel", onTouchEnd, { capture: true });
+      window.removeEventListener("keydown", onOtherInput, { capture: true });
+      window.removeEventListener("pointerdown", onOtherInput, { capture: true });
+      window.removeEventListener("keydown", onKeyScroll);
+      cancelAnimationFrame(settleRaf);
       gsap.ticker.remove(tick);
       mm.revert();
       lenis.destroy();

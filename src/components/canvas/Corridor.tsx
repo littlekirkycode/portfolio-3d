@@ -34,6 +34,26 @@ const FIXTURES = [10, 40, 70, 100, 130, 158];
 
 const END_X = END_VISUAL_X + 8;
 
+/**
+ * The corridor's real lights — warm low fixtures + the bridge's starlight
+ * spill. Mounted by Scene at the Canvas ROOT, outside the shell Suspense:
+ * three keys every lit program on the scene's light COUNT, so lights that
+ * arrive with a suspended subtree recompile every lit material when it
+ * resolves (the boot-time freezes). Here they exist from the first frame.
+ */
+export function CorridorLights() {
+  return (
+    <>
+      {/* Warm corridor lights — mounted LOW so they light floor/walls, not the roof */}
+      {FIXTURES.map((x) => (
+        <pointLight key={x} position={[x, 2.3, 0]} color="#fff0dc" intensity={10} distance={18} decay={2} />
+      ))}
+      {/* cool spill back toward the camera (starlight through the bridge glass) */}
+      <pointLight position={[END_X - 2.6, 1.8, 0]} color="#bcd4ff" intensity={26} distance={28} decay={2} />
+    </>
+  );
+}
+
 /* ── bridge finale ──────────────────────────────────────────────────────── */
 
 const PANEL_CTR_W = 3.4;
@@ -41,7 +61,7 @@ const PANEL_SIDE_W = 2.5;
 const PANEL_YAW = 0.35; // ~20° — outer panes rake toward the camera (bridge silhouette)
 
 /** Console pip strip — a row of tiny multicoloured indicator lights baked into
- *  one small CanvasTexture; animated by an opacity pulse (no per-frame alloc). */
+ *  one small CanvasTexture; a slow 6s opacity breathe (no per-frame alloc). */
 function usePipsTexture(): THREE.CanvasTexture {
   return useMemo(() => {
     const canvas = document.createElement("canvas");
@@ -82,7 +102,7 @@ const CONSOLES = [
 /* ── diegetic social terminals on the bridge console row ──────────────────
    GitHub / LinkedIn as PHYSICAL console kiosks — THE canonical links (the DOM
    list is sr-only for assistive tech). Standing pedestal + raked screen with
-   a blinking prompt cursor; hover eases scale/brightness up and hands the DOM
+   a slow-breathing prompt cursor; hover eases scale/brightness up and hands the DOM
    cursor a "world-hover" event so the custom cursor reacts like it does over
    [data-cursor] elements. Clicks reach the canvas via the body eventSource
    (see Scene) — the canvas layer itself stays pointer-events:none. */
@@ -95,7 +115,7 @@ function setWorldHover(v: boolean) {
 }
 
 /** Terminal screen texture. Also returns the UV spot right after the prompt
- *  text where the blinking cursor block mesh should sit. */
+ *  text where the breathing cursor block mesh should sit. */
 function makeTerminalTexture(
   label: string,
   header: string,
@@ -142,7 +162,7 @@ function makeTerminalTexture(
   ctx.font = `700 64px ${mono}`;
   ctx.fillStyle = "#f4f1ea";
   ctx.fillText(`${label} ↗`, 256, 140);
-  // divider + prompt line (cursor block is a separate blinking mesh)
+  // divider + prompt line (cursor block is a separate breathing mesh)
   ctx.strokeStyle = "rgba(127,176,232,0.25)";
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -206,9 +226,13 @@ function SocialTerminal({
     if (grpRef.current) grpRef.current.scale.setScalar(1 + 0.04 * k);
     if (screenMatRef.current) screenMatRef.current.color.setScalar(1 + 0.35 * k);
     if (stripMatRef.current) stripMatRef.current.opacity = 0.5 + 0.5 * k;
-    // hard-step blink (terminal cursor, not a fade); hover pins it solid
-    if (curMatRef.current)
-      curMatRef.current.opacity = k > 0.5 || t.current % 1.2 < 0.72 ? 0.95 : 0.08;
+    // Slow eased breathe (4s cosine, 0.35↔0.9) instead of the old 1.2s
+    // hard-step blink — nothing on the ship blinks faster than a 3s eased
+    // cycle. Hover pins it solid.
+    if (curMatRef.current) {
+      const breathe = 0.625 - 0.275 * Math.cos((t.current / 4) * Math.PI * 2);
+      curMatRef.current.opacity = breathe + (0.95 - breathe) * k;
+    }
   });
 
   return (
@@ -250,7 +274,7 @@ function SocialTerminal({
           <planeGeometry args={[TERM_W, TERM_H]} />
           <meshBasicMaterial ref={screenMatRef} map={tex} toneMapped={false} />
         </mesh>
-        {/* blinking prompt cursor, positioned right after the "> OPEN CHANNEL" text */}
+        {/* breathing prompt cursor, positioned right after the "> OPEN CHANNEL" text */}
         <mesh position={[(cursorU - 0.5) * TERM_W, (0.5 - cursorV) * TERM_H, 0.006]}>
           <planeGeometry args={[0.05, 0.1]} />
           <meshBasicMaterial ref={curMatRef} color="#7fb0e8" transparent toneMapped={false} />
@@ -318,7 +342,8 @@ function Bridge() {
     updateStarUniforms(uni, rawDt, fxRefs.warp);
     tRef.current += Math.min(rawDt, 1 / 30);
     const pm = pipMat.current;
-    if (pm) pm.opacity = 0.55 + 0.35 * (0.5 + 0.5 * Math.sin(tRef.current * 2.2));
+    // 6s eased breathe, shallow (0.62↔0.86) — was a 2.9s ±0.35 pulse
+    if (pm) pm.opacity = 0.74 + 0.12 * Math.sin((tRef.current / 6) * Math.PI * 2);
   });
 
   const cy = WALL_H / 2;
@@ -326,9 +351,8 @@ function Bridge() {
   const cz = Math.cos(PANEL_YAW);
   return (
     <group>
-      {/* cool spill back toward the camera (starlight through the glass) —
-          NEVER gated: the mounted-light count must stay constant */}
-      <pointLight position={[END_X - 2.6, 1.8, 0]} color="#bcd4ff" intensity={26} distance={28} decay={2} />
+      {/* (the cool starlight spill back toward the camera lives in
+          <CorridorLights/>, mounted at the Canvas root — never gated) */}
 
       <group ref={gatedRef}>
       {/* dark surround behind the canopy */}
@@ -623,10 +647,7 @@ export default function Corridor({
         </mesh>
       ))}
 
-      {/* Warm corridor lights — mounted LOW so they light floor/walls, not the roof */}
-      {FIXTURES.map((x) => (
-        <pointLight key={x} position={[x, 2.3, 0]} color="#fff0dc" intensity={10} distance={18} decay={2} />
-      ))}
+      {/* warm corridor lights: see <CorridorLights/> (Canvas root) */}
 
       <Bridge />
     </group>

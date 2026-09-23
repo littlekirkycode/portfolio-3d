@@ -15,42 +15,16 @@ import { withBase } from "@/lib/asset";
  * for the jewellery brand, etc.).
  */
 const MODELS = [
-  // reused low-poly CC0 objects
-  "plant",
-  "monitor",
-  "trophy",
-  "gem",
-  "globe",
-  "kettlebell",
   // Kenney Space Station Kit — corridor shell (instanced in KitShell)
   "kit-wall",
   "kit-floor",
-  // app-specific low-poly props (one set per room — see RoomProps)
-  "treadmill",
-  "dumbbell",
-  "robot",
-  "deskq",
-  "wateringcan",
-  "compass",
-  "pedestal",
-  "ring",
-  "necklace",
-  "laptop",
-  "officechair",
-  "skyscraper",
-  "sportstrophy",
+  // the companion drone + the shared display pedestal (rooms/shared Plinth)
   "drone",
-  // per-room signature props, round two (all Quaternius, CC0, via poly.pizza)
-  "radar",
-  "crown",
-  "spaceship",
-  "mainframe",
-  "arrowsign",
-  // gym fit-out set (CC-BY via poly.pizza — credited in the README)
-  "punchingbag",
-  "gymbike",
-  "gymbench",
-  "barbell",
+  "pedestal",
+  // Every room is now authored procedurally (see rooms/*): the old low-poly
+  // prop GLBs (gym set, jewellery, trophies, plants, desk kit …) are no
+  // longer referenced, so they are no longer preloaded — ~30 fewer fetches +
+  // parses competing with the first scroll. The files stay in /public.
 ] as const;
 
 export type ModelName = (typeof MODELS)[number];

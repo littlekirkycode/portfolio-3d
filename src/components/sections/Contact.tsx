@@ -34,8 +34,8 @@ function focusAirlock() {
 /**
  * Closing panel (the BRIDGE). A giant display "Let's talk." sits above a
  * magnetic email button; below it, the diegetic DEPART control ramps
- * fxRefs.warp 0→1 (the bridge window's hyperspace streak), flashes a
- * white-blue overlay and — hidden inside the flash — snaps the scroll back to
+ * fxRefs.warp 0→1 (the bridge window's hyperspace streak), fades to the
+ * hull's darkness and — hidden inside that cut — snaps the scroll back to
  * the airlock. Reduced motion skips warp/flash for a plain scroll home.
  */
 export default function Contact() {
@@ -130,7 +130,8 @@ export default function Contact() {
       // warp is at full — flash, and hide the scroll snap inside it
       const el = flashRef.current;
       if (el) {
-        el.style.transition = "opacity 90ms ease-in";
+        // a soft cut into darkness (no white flash) that hides the snap
+        el.style.transition = "opacity 260ms cubic-bezier(0.65,0,0.35,1)";
         el.style.opacity = "1";
       }
       timerRef.current = window.setTimeout(() => {
@@ -139,11 +140,11 @@ export default function Contact() {
         focusAirlock();
         const el2 = flashRef.current;
         if (el2) {
-          el2.style.transition = "opacity 300ms ease-out";
+          el2.style.transition = "opacity 900ms cubic-bezier(0.22,1,0.36,1)";
           el2.style.opacity = "0";
         }
         departing.current = false;
-      }, 140);
+      }, 320);
     };
     rafRef.current = requestAnimationFrame(step);
   }, [reduced]);
@@ -157,8 +158,22 @@ export default function Contact() {
       data-section
       data-label="Contact"
       id="contact"
-      className="relative flex min-h-screen w-full shrink-0 flex-col justify-center gap-12 px-[8vw] py-24 desktop:h-screen desktop:w-screen desktop:gap-[3.5vh] desktop:py-0 desktop:pb-[14vh] desktop:pt-[10vh]"
+      /* Phones: the statement sits high and the controls sit LOW, just above
+         the dock — the bridge's GITHUB / HAIL / LINKEDIN consoles frame the
+         middle of a portrait screen and must stay visible between them. */
+      className="relative isolate flex min-h-screen w-full shrink-0 flex-col justify-between gap-10 px-[var(--ui-gutter)] pb-40 pt-[20vh] desktop:h-screen desktop:w-screen desktop:justify-center desktop:gap-[4vh] desktop:py-0 desktop:pb-[max(17vh,140px)] desktop:pt-[10vh]"
     >
+      {/* Soft left-side shade behind the type column: separates the statement
+          and controls from the lit bridge (and the drone docked behind them)
+          without a visible card edge. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 left-0 -z-10 w-full desktop:w-[62%]"
+        style={{
+          background:
+            "radial-gradient(120% 70% at 0% 55%, rgb(7 7 10 / 0.62) 0%, rgb(7 7 10 / 0.35) 45%, transparent 75%)",
+        }}
+      />
       {/* No kicker row — nav, progress rail and HUD readout already all say
           BRIDGE; the finale keeps one statement and two controls, nothing else. */}
       {/* Giant statement */}
@@ -187,96 +202,95 @@ export default function Contact() {
       </h2>
 
       {/* Magnetic email button + supporting copy */}
-      <div className="flex w-full flex-col gap-12 desktop:flex-row desktop:items-end desktop:justify-between desktop:gap-8">
+      <div className="flex w-full flex-col desktop:flex-row desktop:items-end desktop:justify-between desktop:gap-8">
         {/* No copy card here — it sat straight over the bridge kiosks and the
             console row (QA: "the box blocks github linkedin and console").
             The comms flavour lives IN the world now: the HAIL console centre-
             bridge fires the same mailto as the button below. */}
-        <div className="flex flex-col gap-8 desktop:gap-[2.5vh]">
+        <div className="flex flex-col gap-3 desktop:gap-[2.5vh]">
           <a
             ref={btnRef}
             href={`mailto:${SITE.email}`}
             data-cursor
             onPointerMove={onMove}
             onPointerLeave={onLeave}
-            className="group relative inline-flex w-fit items-center gap-4 rounded-full border border-line bg-bg-elev/50 px-7 py-4 backdrop-blur-sm transition-colors duration-500 hover:border-accent"
+            aria-label={`Email ${SITE.email}`}
+            // Desktop width is capped by type size (~330px at 1440): the pill
+            // must clear the GITHUB console's x-range beside it.
+            className="ui-btn ui-btn--lg ui-btn--primary group w-full max-w-full !justify-between !gap-3 !px-5 !text-label !tracking-[0.08em] !normal-case desktop:w-fit desktop:!justify-center desktop:!gap-4 desktop:!px-6 desktop:!text-body-s desktop:!tracking-[0.06em]"
           >
+            <span className="ui-dot transition-transform duration-500 group-hover:scale-150" aria-hidden />
+            <span className="min-w-0 truncate font-mono text-[color:var(--ui-ink)]">{SITE.email}</span>
             <span
               aria-hidden
-              className="absolute inset-0 rounded-full opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-              style={{
-                background:
-                  "radial-gradient(120% 140% at 50% 50%, color-mix(in srgb, var(--color-accent) 28%, transparent), transparent 70%)",
-              }}
-            />
-            <span className="relative h-2 w-2 rounded-full bg-accent transition-transform duration-500 group-hover:scale-150" />
-            <span className="relative font-mono text-sm uppercase tracking-[0.2em] text-ink md:text-base">
-              {SITE.email}
-            </span>
-            <span
-              aria-hidden
-              className="relative text-accent transition-transform duration-500 group-hover:translate-x-1"
+              className="text-[color:var(--ui-ink-2)] transition-transform duration-500 group-hover:translate-x-1"
             >
               &rarr;
             </span>
           </a>
 
-          {/* DEPART — spins up the warp streak, flashes, returns to the airlock.
-              No fine print: the button + the flash explain themselves. */}
+          {/* Socials. The two comms kiosks flanking the bridge console are
+              the designed way in on desktop, so there the links are visually
+              hidden until keyboard focus reveals each one in place (.ui-social,
+              WCAG 2.4.7). On phones the kiosks are too small to be the only
+              way to GitHub / LinkedIn, so they are real, visible chips. */}
+          <nav aria-label="Social links" className="flex gap-2 desktop:relative desktop:order-last desktop:h-0">
+            {SITE.socials.map((s) => (
+              <a
+                key={s.label}
+                href={s.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-cursor
+                aria-label={`${s.label} (opens in a new tab)`}
+                className="ui-btn ui-social flex-1 desktop:flex-none"
+              >
+                {s.label}
+                <span aria-hidden className="text-[color:var(--ui-ink-3)]">
+                  ↗
+                </span>
+              </a>
+            ))}
+          </nav>
+
+          {/* DEPART — spins up the warp streak, fades to the hull's dark,
+              returns to the airlock. */}
           <button
             type="button"
             data-cursor
             onClick={onDepart}
-            className="group flex w-fit items-center gap-3 border border-line bg-bg-elev/40 px-5 py-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ink-dim backdrop-blur-sm transition-colors duration-300 hover:border-accent-2 hover:text-ink"
+            className="ui-btn group w-full desktop:w-fit"
           >
-            <span
+            <span aria-hidden className="ui-dot ui-dot--off transition-colors duration-300 group-hover:bg-[color:var(--hud-accent)]" />
+            Initiate departure
+            <svg
               aria-hidden
-              className="h-1.5 w-1.5 rounded-full bg-accent-2 transition-transform duration-300 group-hover:scale-150"
-            />
-            INITIATE DEPARTURE
-            <span
-              aria-hidden
-              className="text-accent-2 transition-transform duration-500 group-hover:translate-x-1"
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              className="opacity-70 transition-transform duration-500 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
             >
-              ↗
-            </span>
+              <path d="M2.5 9.5l7-7M4 2.5h5.5V8" />
+            </svg>
           </button>
         </div>
-
-        {/* Socials live IN THE WORLD — the two comms kiosks flanking the
-            bridge console (Corridor's SocialTerminal). Assistive tech and
-            crawlers get this hidden equivalent, not an on-screen duplicate.
-            Keyboard focus, however, must be VISIBLE (WCAG 2.4.7): while a link
-            is focus-visible it un-clips into a HUD-style chip pinned above the
-            footer. sr-only keeps position:absolute, so we only undo the 1px
-            clip + set coordinates — no cascade fight with `not-sr-only`. */}
-        <nav aria-label="Social links">
-          {SITE.socials.map((s) => (
-            <a
-              key={s.label}
-              href={s.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="sr-only focus-visible:bottom-[14vh] focus-visible:right-[8vw] focus-visible:z-50 focus-visible:m-0 focus-visible:h-auto focus-visible:w-auto focus-visible:overflow-visible focus-visible:[clip-path:none] focus-visible:border focus-visible:border-accent focus-visible:bg-bg-elev/90 focus-visible:px-4 focus-visible:py-2 focus-visible:font-mono focus-visible:text-[11px] focus-visible:uppercase focus-visible:tracking-[0.22em] focus-visible:text-ink focus-visible:backdrop-blur-md"
-            >
-              {s.label}
-            </a>
-          ))}
-        </nav>
       </div>
 
-      {/* Footer — one quiet line: © + the astronaut credit (its CC-BY licence
-          requires attribution; everything else aboard is CC0 Kenney /
-          Quaternius). Location line + hull joke cut, and no gradient scrim:
-          two short mono runs read fine over the dark deck. */}
-      <footer className="absolute bottom-[6vh] left-[8vw] right-[8vw] flex items-center justify-between border-t border-line pt-5 font-mono text-[0.65rem] uppercase tracking-[0.3em] text-ink-dim">
-        <span>
+      {/* Footer semantics only — the visible © + astronaut CC-BY credit now
+          sits in the bottom dock's context slot while the bridge is framed
+          (the old absolute footer line collided with the fixed HUD). */}
+      <footer className="sr-only">
+        <p>
           &copy; {YEAR} {SITE.name}
-        </span>
-        <span className="hidden md:inline">ASTRONAUT: PW WU (CC-BY)</span>
+        </p>
+        <p>Astronaut model: PW Wu (CC-BY). Other models: Kenney and Quaternius (CC0).</p>
       </footer>
 
-      {/* white-blue departure flash (opacity driven imperatively) */}
+      {/* departure cut — a soft fade into the hull's dark, never a white
+          flash (opacity driven imperatively) */}
       {mounted &&
         createPortal(
           <div ref={flashRef} aria-hidden className="depart-flash" />,

@@ -1,71 +1,50 @@
 "use client";
 
-import * as THREE from "three";
-import { Model } from "../ModelLoader";
-import { getPuckTex, d2r, type BayProps } from "./shared";
+import { type BayProps } from "./shared";
 import SelfGrowRoom from "./SelfGrowRoom";
+import { useNurseryMats, type FeatureSpec, type LampBar } from "./selfgrow/kit";
+import { DECK, FeaturePlants, GrowBar, PlantStand, Planters, PlantingDeck, type PlanterSpec } from "./selfgrow/Greenhouse";
 
-/** SelfGrow bay — the complete room composition (installation + props).
- *  SelfGrow — plants arc left-to-centre (tallest back-left) + one far-right so no dead third */
-export default function SelfGrowBay({ accent }: BayProps) {
+/** SelfGrow bay — a calm greenhouse built around one hero. Everything stands
+ *  on one planting deck that covers the bay's stock mat (so no piece ever
+ *  straddles a rim line): the streak bed + group table (SelfGrowRoom), a
+ *  greenhouse corner in the left column (a tall feature plant raised on a
+ *  walnut stand under the warm grow bar, a smaller one in front) and one low
+ *  bowl at the front right. The feature plants are the streak's week one
+ *  fully grown — same procedural leaf, same glazed ceramic, same walnut — so
+ *  the room speaks one language. */
+
+const STAND = { x: -3.0, z: 0.22, w: 0.6, d: 0.6, h: 0.16 };
+
+const PLANTERS: PlanterSpec[] = [
+  { x: STAND.x, y: STAND.h, z: STAND.z, r: 0.25, h: 0.36 }, // tall feature, on the stand
+  { x: -2.9, z: 1.74, r: 0.2, h: 0.27 }, // front-left companion
+  { x: 3.02, z: 1.96, r: 0.2, h: 0.19 }, // low bowl, front right
+];
+
+const soil = (p: PlanterSpec) => (p.y ?? 0) + p.h - 0.04;
+
+const PLANTS: FeatureSpec[] = [
+  { x: PLANTERS[0].x, y: soil(PLANTERS[0]), z: PLANTERS[0].z, height: 1.18, leaves: 26, seed: 11 },
+  { x: PLANTERS[1].x, y: soil(PLANTERS[1]), z: PLANTERS[1].z, height: 0.74, leaves: 18, seed: 37, hue: 1 },
+  { x: PLANTERS[2].x, y: soil(PLANTERS[2]), z: PLANTERS[2].z, height: 0.48, leaves: 16, seed: 58, hue: -1, spread: 1.35 },
+];
+
+/** The grow bar over the left column (room-local, above the deck). */
+const BAR: LampBar = { x: -2.98, y: 2.3, z0: -0.3, z1: 1.8, strength: 1 };
+
+export default function SelfGrowBay({ accent, animate, mobile }: BayProps) {
+  const mats = useNurseryMats(accent);
   return (
-      <group>
-        <Model name="plant" height={1.45} position={[-3.3, 0, 1.7]} rotation={[0, d2r(25), 0]} />
-        {/* hanging grow-lamp over the tall back-left plant: rod from the bay
-            ceiling (local y 4), cone shade, warm emissive face + a soft warm
-            pool on the foliage below — a nurture beat, no real light added */}
-        <group position={[-3.3, 0, 1.7]}>
-          <mesh position={[0, 3.32, 0]}>
-            <cylinderGeometry args={[0.015, 0.015, 1.36, 8]} />
-            <meshStandardMaterial color="#171a24" roughness={0.6} metalness={0.5} />
-          </mesh>
-          <mesh position={[0, 2.56, 0]}>
-            <coneGeometry args={[0.22, 0.18, 20, 1, true]} />
-            <meshStandardMaterial color="#1b1e2a" roughness={0.5} metalness={0.55} side={THREE.DoubleSide} />
-          </mesh>
-          <mesh position={[0, 2.47, 0]} rotation-x={-Math.PI / 2}>
-            <circleGeometry args={[0.16, 20]} />
-            <meshBasicMaterial color="#ffd9a0" toneMapped={false} side={THREE.BackSide} />
-          </mesh>
-          <mesh position={[0, 1.62, 0]} rotation-x={-Math.PI / 2}>
-            <planeGeometry args={[1.0, 1.0]} />
-            <meshBasicMaterial
-              map={getPuckTex()}
-              color="#ffbe8a"
-              transparent
-              opacity={0.16}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-            />
-          </mesh>
-        </group>
-        {/* pulled left + trimmed so its top leaf clears the phone's
-            bottom-left corner from the dwell camera */}
-        <Model name="plant" height={0.85} position={[-2.4, 0, 0.35]} rotation={[0, d2r(-60), 0]} />
-        {/* two-tier planter bench at the growth path's end — the streak
-            made physical: the small plant graduates onto the top step.
-            Low (≤0.6 + plant 0.5) so it ducks the panel's bottom edge */}
-        <group position={[-0.35, 0, 1.05]} rotation={[0, d2r(-12), 0]}>
-          <mesh position={[-0.34, 0.11, 0]}>
-            <boxGeometry args={[0.62, 0.22, 0.6]} />
-            <meshStandardMaterial color="#20242f" roughness={0.6} metalness={0.4} />
-          </mesh>
-          <mesh position={[0.34, 0.2, 0]}>
-            <boxGeometry args={[0.62, 0.4, 0.6]} />
-            <meshStandardMaterial color="#252a37" roughness={0.6} metalness={0.4} />
-          </mesh>
-          <mesh position={[0, 0.415, 0.26]}>
-            <boxGeometry args={[1.3, 0.03, 0.04]} />
-            <meshBasicMaterial color={accent} toneMapped={false} />
-          </mesh>
-          <Model name="plant" height={0.34} position={[-0.34, 0.22, 0]} rotation={[0, d2r(40), 0]} />
-          <Model name="plant" height={0.5} position={[0.34, 0.4, 0]} rotation={[0, d2r(140), 0]} />
-        </group>
-        <Model name="wateringcan" height={0.36} position={[-1.8, 0, 1.85]} rotation={[0, d2r(55), 0]} />
-        {/* streak wall + accountability ring */}
-        <SelfGrowRoom accent={accent} />
-        {/* beyond the panel's right edge so the right third isn't empty */}
-        <Model name="plant" height={0.45} position={[3.4, 0, 1.2]} rotation={[0, d2r(80), 0]} />
+    <group>
+      <PlantingDeck mats={mats} />
+      <group position-y={DECK.h}>
+        <PlantStand {...STAND} mats={mats} />
+        <Planters specs={PLANTERS} mats={mats} />
+        <FeaturePlants specs={PLANTS} mats={mats} animate={animate} lamp={BAR} />
+        <GrowBar bar={BAR} mats={mats} />
+        <SelfGrowRoom accent={accent} animate={animate} mobile={mobile} mats={mats} />
       </group>
+    </group>
   );
 }

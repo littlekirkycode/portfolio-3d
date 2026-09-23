@@ -19,6 +19,22 @@ authoring rooms, panels or UI, so the ship reads as ONE authored place.
 - **Truthful content.** Numbers and facts come from `src/lib/constants.ts` (SITE,
   PROJECTS, SKILLS, EXPERIENCE, ACHIEVEMENTS). Never invent metrics.
 
+### Owner's priority (added 2026-09-23)
+
+**SelfQuest is the room that most FAILS the bar right now** — the owner named it as
+the worst-authored room ("it and its assets look terrible, it's not authored
+properly"). It is not a benchmark to match; it needs the biggest rebuild. Critics:
+judge SelfQuest hardest — a tidied-up version of the same scattered low-poly gym is
+a fail. Any "sets the bar" wording in a brief means "must be rebuilt to become the
+bar", never "is already the bar".
+
+**Placement is critical (owner, 2026-09-23).** Every room is judged on WHERE things
+sit as much as how they look: nothing floating or clipping, nothing half-hidden
+behind the info panel/screen/label, nothing crammed against a wall or straddling a
+mat edge, deliberate spacing and alignment, a clear focal point and sightline from
+the dwell camera, objects oriented to present to the camera, grounded contact with
+floor/plinth/mount. Critics treat a placement problem as a blocker.
+
 ## 2. Colour + materials — `src/components/canvas/theme.ts`
 
 - `NEUTRAL.*` for every structural surface. Darkest authored surface is
@@ -26,7 +42,21 @@ authoring rooms, panels or UI, so the ship reads as ONE authored place.
 - One accent per bay (`room.accent` from constants). Use it for **light and small
   emitters/trims** (`MATERIALS.emit(accent, GLOW.trim|line|hot)`), not to paint large
   lit surfaces. Large surfaces are neutrals, optionally `tintNeutral(neutral, accent, ≤0.15)`.
-- `WARM` is the only secondary hue (practical lamps, brass, wood).
+- **Accent as LIGHT on big surfaces** goes through `accentLight(accent, t)` /
+  `accentLightShare(accent)` (theme.ts): warm white pulled toward the accent, and
+  warm accents (reds, oranges, amber, gold) get ~60% of the share because they
+  turn the grey hull muddy salmon / mustard. Used by the bay light pool
+  (Walls `BAY_LIGHT_RECIPES`), the cove/base washes (bayLighting) and the hero
+  screen's wall glow (bayScreens). Back walls read as lit neutral hull with the
+  screen sitting ON them — never an accent-coloured slab behind the picture.
+- **Bay floors** (`bayFloors.tsx BayMat`): a dark neutral slab
+  (`tintNeutral(hullShadow, accent, 0.1)`) with a ~2.5 cm hairline at trim×0.55
+  (jewellery: brass hairline). No accent carpets, no neon rims. Painted floor
+  markings (`FLOOR_ART`) may only stage objects that exist; no node dots / white
+  pins (they read as stray specks from the dwell camera).
+- `WARM` is the only secondary hue (practical lamps, brass, wood). For metal brass
+  use an aged brass (e.g. SelfQuest `BRASS` #b58a45) — `WARM` at high metalness
+  renders peach.
 - Use `MATERIALS.*` presets (paint, paintLight, steel, polished, rubber, wood, glass).
   They're tuned for the scene's studio environment (`Scene.tsx` `ENV_INTENSITY`) and
   the bay light pool. Metals are fine now (there is an environment to reflect) — but

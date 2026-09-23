@@ -47,44 +47,69 @@ const DEEP_LINKS: ReadonlyMap<string, number> = (() => {
   return m;
 })();
 
+/** The deep-link stop named by the current URL hash, if any. R7: browsers
+ *  preserve raw '%' in fragments, so a truncated share link (#selfquest%2) or
+ *  copy-paste junk (#75%) reaches us malformed and decodeURIComponent THROWS.
+ *  Malformed hash = not a deep link. */
+function hashTarget(): number | undefined {
+  try {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    return id ? DEEP_LINKS.get(id) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// A valid deep link owns the landing position: stop the browser restoring
+// the previous visit's scroll on reload (it restored mid-corridor, the jump
+// then saw progress > 0 and skipped, and the camera sat between bays).
+// Module scope so it runs as early as this chunk loads, before the restore.
+if (typeof window !== "undefined" && hashTarget() !== undefined) {
+  try {
+    history.scrollRestoration = "manual";
+  } catch {
+    /* ignore — some embedded webviews lock it */
+  }
+}
+
+const getLenis = () => (window as unknown as { __lenis?: LenisLike }).__lenis;
+
 export function useDeepLink(): void {
   const ready = useScrollStore((s) => s.ready);
 
-  // ── Inbound: #<id> → jump the scroll engine to that stop, once, on boot ──
+  // ── Inbound: #<id> → cut the scroll engine to that stop, once, on boot ──
   useEffect(() => {
     if (!ready) return;
-    // R7: browsers preserve raw '%' in fragments, so a truncated share link
-    // (#selfquest%2) or copy-paste junk (#75%) reaches us malformed and
-    // decodeURIComponent THROWS. Uncaught inside this effect it would unmount
-    // the whole React tree (no app-level boundary). Malformed hash = not a
-    // deep link = ignore.
-    let id = "";
-    try {
-      id = decodeURIComponent(window.location.hash.slice(1));
-    } catch {
-      return;
-    }
-    const target = id ? DEEP_LINKS.get(id) : undefined;
+    const target = hashTarget();
     if (target === undefined) return;
 
     let cancelled = false;
     let raf = 0;
+    // Never yank a visitor off their OWN scroll: any real input before the
+    // jump lands cancels it. (This used to test progress > 0.02, which a
+    // browser scroll restore also tripped.)
+    const onInput = () => {
+      cancelled = true;
+    };
+    const opts = { capture: true, passive: true } as const;
+    window.addEventListener("wheel", onInput, opts);
+    window.addEventListener("touchstart", onInput, opts);
+    window.addEventListener("keydown", onInput, opts);
     // S1: on desktop lenis.limit stays 0 until the lazy 3D chunk mounts and
     // the pin spacer is measured (~1.2s after Lenis creation), so a one-shot
     // jump always bailed and the camera never parked. Poll (a rAF with two
-    // cheap reads) until the limit is real; give up if the visitor starts
-    // walking (progress > 0.02 — never yank them off their own scroll) or
-    // after a generous deadline (something is wrong; a late teleport would
-    // only confuse).
+    // cheap reads) until the limit is real; give up after a generous
+    // deadline (something is wrong; a late teleport would only confuse).
     const deadline = performance.now() + 15_000;
     const jump = () => {
       if (cancelled) return;
-      if (scrollRefs.progress > 0.02) return;
-      const lenis = (window as unknown as { __lenis?: LenisLike }).__lenis;
+      const lenis = getLenis();
       if (!lenis || !(lenis.limit > 0)) {
         if (performance.now() < deadline) raf = requestAnimationFrame(jump);
         return;
       }
+      // immediate = a cut: the provider bumps scrollRefs.cutSeq, so the
+      // camera lands parked on the bay rather than flying the corridor.
       lenis.scrollTo(target * lenis.limit, { immediate: true });
     };
     // Start after the font-settle ScrollTrigger.refresh() (SmoothScrollProvider
@@ -105,7 +130,27 @@ export function useDeepLink(): void {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      window.removeEventListener("wheel", onInput, opts);
+      window.removeEventListener("touchstart", onInput, opts);
+      window.removeEventListener("keydown", onInput, opts);
     };
+  }, [ready]);
+
+  // ── In-page: an edited hash or an in-page #link glides to that stop. Our
+  //    own outbound writes use replaceState, which never fires hashchange. ──
+  useEffect(() => {
+    if (!ready) return;
+    const onHash = () => {
+      const target = hashTarget();
+      const lenis = getLenis();
+      if (target === undefined || !lenis || !(lenis.limit > 0)) return;
+      if (Math.abs(target - scrollRefs.progress) < 0.002) return;
+      // The provider's scrollTo wrapper sets the eased duration for the trip
+      // (and turns it into a cut under reduced motion).
+      lenis.scrollTo(target * lenis.limit, { duration: 1.5 });
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [ready]);
 
   // ── Outbound: focused bay → hash (replaceState — no history spam, no

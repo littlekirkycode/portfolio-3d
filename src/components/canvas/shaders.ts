@@ -352,7 +352,140 @@ export const monolithFragment = /* glsl */ `
 `;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   SCREEN — CRT / TV display surface.
+   DISPLAY — the ship's exhibit-display glass (bay hero screens + showreel).
+   Flat modern panel, not a CRT: two slides crossfade (uMix, eased on the JS
+   side) with an independent slow zoom each (uZoomA/B, cover-fit via uCover*),
+   inside a rounded-rect aperture with an anti-aliased edge. Exposure control
+   is a luminance soft-knee: everything below uKnee passes untouched, the
+   highlights roll off asymptotically toward uPeak — so white app UIs read as
+   white paper but never cross the 0.78 bloom threshold and blow out. The
+   glass sheen is STATIC (no travelling light). Textures are sRGB-tagged, so
+   texture2D returns linear values; output is linear like any toneMapped:false
+   emitter.
+   ───────────────────────────────────────────────────────────────────────── */
+export const displayVertex = /* glsl */ `
+  varying vec2 vUv;
+  void main(){
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const displayFragment = /* glsl */ `
+  precision highp float;
+  uniform sampler2D uTexA;
+  uniform sampler2D uTexB;
+  uniform vec2  uCoverA;   // cover-fit uv scale for A (≤1 per axis)
+  uniform vec2  uCoverB;
+  uniform vec4  uCropA;    // source sub-rect in texture uv: offset.xy, size.zw
+  uniform vec4  uCropB;    //   (lets a pane show just the phone screen of a store image)
+  uniform float uZoomA;    // ≥1 slow zoom
+  uniform float uZoomB;
+  uniform vec2  uPanA;     // -1..1 per axis: where the cover window sits in the
+  uniform vec2  uPanB;     //   cropped-away slack (+y = top). 0 = centred.
+  uniform float uMix;      // 0 = A, 1 = B (already eased)
+  uniform float uDim;      // gentle mid-transition dim that hides the double exposure
+  uniform vec2  uSize;     // aperture size in world units
+  uniform float uRadius;   // corner radius in world units
+  uniform float uExposure; // linear pre-gain (global)
+  uniform float uExpA;     // per-slide gain — bright (white-UI) art is pulled down
+  uniform float uExpB;
+  uniform float uKnee;     // luminance where the highlight roll-off starts
+  uniform float uPeak;     // asymptotic max luminance (keep < 0.78 bloom)
+  uniform float uGlass;    // sheen strength
+  uniform vec3  uSurround; // colour outside the aperture (black glass)
+  varying vec2 vUv;
+
+  vec2 fitUv(vec2 uv, vec2 cover, float zoom, vec4 crop, vec2 pan){
+    vec2 c = cover / zoom;
+    return crop.xy + ((uv - 0.5) * c + 0.5 + pan * (1.0 - c) * 0.5) * crop.zw;
+  }
+  float sdRound(vec2 p, vec2 b, float r){
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+  }
+  vec3 expose(vec3 c){
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    if(l > uKnee){
+      float r = max(uPeak - uKnee, 1e-3);
+      float nl = uKnee + r * (1.0 - exp(-(l - uKnee) / r));
+      c *= nl / l;
+    }
+    return c;
+  }
+
+  void main(){
+    vec3 col = texture2D(uTexA, fitUv(vUv, uCoverA, uZoomA, uCropA, uPanA)).rgb * uExpA;
+    if(uMix > 0.001){
+      vec3 b = texture2D(uTexB, fitUv(vUv, uCoverB, uZoomB, uCropB, uPanB)).rgb * uExpB;
+      col = mix(col, b, uMix);
+    }
+    col *= uExposure * (1.0 - uDim);
+    col = expose(col);
+
+    // aperture: rounded rect, AA'd in world units
+    vec2 p = (vUv - 0.5) * uSize;
+    float d = sdRound(p, uSize * 0.5, uRadius);
+    float aa = max(fwidth(d), 1e-4);
+    float inside = 1.0 - smoothstep(-aa, aa, d);
+    // soft inner edge: panel backlight falls off in the last few mm
+    col *= mix(0.84, 1.0, smoothstep(0.0, 0.06, -d));
+
+    // static glass: a broad soft reflection from the upper-left plus a faint
+    // narrow streak — reads as a glazed surface, never moves
+    float g = vUv.y * 0.9 - vUv.x * 0.5;
+    float sheen = smoothstep(0.18, 0.62, g) * 0.55 + smoothstep(0.035, 0.0, abs(g - 0.30)) * 0.35;
+    col += vec3(0.78, 0.82, 0.92) * sheen * uGlass;
+
+    col = mix(uSurround, col, inside);
+    gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
+    #include <colorspace_fragment>
+  }
+`;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WALL LIGHT — what a hung display does to the wall behind it. One quad,
+   two modes: uMode 0 = contact shadow (black, alpha), uMode 1 = the glow the
+   screen throws (additive colour). Both fall off from the fixture's own
+   rounded-rect outline (not a radial blob), so the shadow hugs the bezel and
+   the glow reads as light spilling off its edges. Static — never animated.
+   ───────────────────────────────────────────────────────────────────────── */
+export const wallLightFragment = /* glsl */ `
+  precision highp float;
+  uniform vec2  uSize;     // quad size (world units)
+  uniform vec2  uOffset;   // fixture centre relative to the quad centre
+  uniform vec2  uBox;      // fixture half-size
+  uniform float uRadius;
+  uniform float uFall;     // falloff distance (world units)
+  uniform float uStrength; // alpha (shadow) or colour gain (glow) at the edge
+  uniform vec3  uColor;
+  uniform float uMode;
+  uniform float uInner;    // glow: ramp-in distance off the edge (the shadow owns it)
+  varying vec2 vUv;
+  float sdRound(vec2 p, vec2 b, float r){
+    vec2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+  }
+  void main(){
+    vec2 p = (vUv - 0.5) * uSize - uOffset;
+    float d = max(sdRound(p, uBox, uRadius), 0.0);
+    // exponential falloff, faded to exactly 0 before the quad edge
+    vec2 room = uSize * 0.5 - abs((vUv - 0.5) * uSize);
+    float tail = smoothstep(0.0, 0.25, min(room.x, room.y));
+    float k = exp(-d / uFall) * tail;
+    if(uInner > 0.0) k *= smoothstep(0.0, uInner, d);
+    if(uMode < 0.5){
+      gl_FragColor = vec4(0.0, 0.0, 0.0, uStrength * k);
+    } else {
+      gl_FragColor = vec4(uColor * uStrength * k, 1.0);
+      #include <colorspace_fragment>
+    }
+  }
+`;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SCREEN — CRT / TV display surface. (Legacy — the hero screens and the
+   showreel now use DISPLAY above; kept for any stray importer.)
    Samples a portrait image texture and applies barrel curvature, scanlines,
    a chromatic split, flicker, grain and a vignette. Rendered emissive
    (toneMapped:false) so Bloom turns it into a glowing screen in the dark hall.

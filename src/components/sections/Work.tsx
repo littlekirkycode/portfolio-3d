@@ -33,9 +33,9 @@ export default function Work() {
       id="work"
       className="pointer-events-none relative flex h-[900vh] w-full shrink-0 flex-col justify-start px-[8vw] pt-[14vh] desktop:h-screen desktop:w-[960vw] desktop:flex-col desktop:justify-end desktop:pt-0 desktop:py-0 desktop:pb-[10vh]"
     >
-      <p className="font-mono text-[0.7rem] uppercase tracking-[0.35em] text-ink-dim">
-        (02) Selected Work — keep scrolling
-      </p>
+      {/* (The old "(02) Selected Work — keep scrolling" caption is gone: it
+          sat in the bottom dock's band, and the dock's context slot now says
+          where you are.) */}
 
       {/* Crawlable / screen-reader mirror of the WebGL corridor content. */}
       <div className="sr-only">
@@ -116,24 +116,16 @@ export default function Work() {
         </article>
       </div>
 
-      {/* The two REAL project links are keyboard tab stops, so they cannot
-          live inside the clipped mirror above — the container's overflow
-          swallowed their :focus-visible outline entirely (WCAG 2.4.7, R11).
-          Same per-link treatment as Contact's socials: each link is its own
-          sr-only element that un-clips into a HUD chip while focus-visible.
-          Positioned near the panel's top-left — on desktop the focusin
-          handler has just parked the camera at this panel's start, and on
-          mobile the browser scrolls the (now visible) chip into view. */}
-      <nav aria-label="Project links">
+      {/* Crawler / screen-reader links to the live projects. NOT keyboard
+          tab stops (tabIndex -1): as tab stops they were invisible (clipped
+          inside a 960vw panel, focus landing off-screen) and the focusin
+          handler flew the camera to the panel START — backwards to the
+          airlock. The keyboard route is the dock: stop pager → the settled
+          room's VISIT LIVE / DOSSIER. */}
+      <nav aria-label="Project links" className="sr-only">
         {PROJECTS.filter((p) => p.href && p.href !== "#").map((p) => (
-          <a
-            key={p.id}
-            href={p.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="sr-only pointer-events-auto focus-visible:left-[8vw] focus-visible:top-[22vh] focus-visible:z-50 focus-visible:m-0 focus-visible:h-auto focus-visible:w-auto focus-visible:overflow-visible focus-visible:[clip-path:none] focus-visible:border focus-visible:border-accent focus-visible:bg-bg-elev/90 focus-visible:px-4 focus-visible:py-2 focus-visible:font-mono focus-visible:text-[11px] focus-visible:uppercase focus-visible:tracking-[0.22em] focus-visible:text-ink focus-visible:backdrop-blur-md"
-          >
-            Visit {p.title}
+          <a key={p.id} href={p.href} target="_blank" rel="noopener noreferrer" tabIndex={-1}>
+            Visit {p.title} live
           </a>
         ))}
       </nav>

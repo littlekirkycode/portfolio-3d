@@ -1,211 +1,319 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { gsap } from "@/lib/gsap";
-import { useScrollStore } from "@/lib/scrollStore";
-import { ROOMS, type Room } from "@/components/canvas/hallConfig";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+import { SECTIONS, SITE } from "@/lib/constants";
+import { scrollRefs, useScrollStore, useShipSection } from "@/lib/scrollStore";
+import { ROOMS, featureFocusAt, galleryFocusAt } from "@/components/canvas/hallConfig";
 import DossierOverlay from "@/components/ui/DossierOverlay";
+import ScrollCue from "@/components/ui/ScrollCue";
 import { track } from "@/lib/analytics";
 
 /**
- * Floating action pills that appear when the camera is focused on a PROJECT
- * bay. Lives in the DOM (the WebGL canvas is pointer-events:none), driven by
- * the store's coarse `focusedRoom`.
+ * The bottom dock's CONTEXT SLOT (left of Row A). One place that always says
+ * what you're looking at, and carries that thing's actions:
  *
- *  - "Visit" — the clickable link to the live product (only when the project
- *    has a real URL).
- *  - "Open dossier ▸" — the case-study overlay (finding 43), for EVERY project
- *    bay: the three URL-less projects finally get a payoff action.
+ *   airlock  → the scroll cue
+ *   a bay    → exhibit tag (index · title) + VISIT LIVE / DOSSIER for projects
+ *              (ONE verb per action, shared with the dossier's footer)
+ *   a stop   → the lobby showreel / observation gallery (named, unnumbered)
+ *   transit  → a quiet "in transit" line (only after a real 600 ms in transit)
+ *   bridge   → the © + astronaut CC-BY credit
  *
- * Enter/exit is gsap (was motion's AnimatePresence mode="wait" — finding 49):
- * the pill row for the PREVIOUS room fades out fully before the next one
- * mounts and fades in, so direct bay-to-bay focus changes never cross-fade.
+ * STATE: `slot.current` IS the settled target — there is no chained
+ * exit→enter tween whose completion callback could be killed and leave the
+ * slot stuck on a stale room (the old failure: "IN TRANSIT" + the previous
+ * accent at the SelfAware stop). A settle swaps current and keeps the old
+ * one as an absolutely-positioned, aria-hidden ghost that plays a CSS fade-
+ * out (`both` fill — even if the cleanup timer never ran it is invisible and
+ * inert). The incoming line plays a CSS rise-in keyed on its generation.
+ *
+ * Debounce: rooms / bridge / airlock settle after holding 160 ms (focus
+ * flickers A→null→B at bay edges); TRANSIT only after holding 600 ms, so a
+ * bay→bay walk goes straight Exhibit 01 → Exhibit 02 with one swap.
+ *
+ * The settled slot's accent is published to :root --hud-accent (a registered
+ * <color>, so nav, rail, focus rings and buttons ease between rooms).
  */
-export default function ProjectLink() {
-  const id = useScrollStore((s) => s.focusedRoom);
-  const room = id ? ROOMS.find((r) => r.id === id) : null;
-  // Any focused project bay shows the row (the dossier pill needs no URL).
-  const target = room?.project ? room : null;
-  const targetId = target?.id ?? null;
 
-  // The room currently DISPLAYED (kept mounted through its exit animation).
-  const [shown, setShown] = useState<Room | null>(null);
+type Slot =
+  | { kind: "hero" }
+  | { kind: "transit" }
+  | { kind: "bridge" }
+  | { kind: "stop"; stop: Stop }
+  | { kind: "room"; roomIndex: number };
+
+type Stop = "showreel" | "gallery";
+const STOP_COPY: Record<Stop, { kicker: string; title: string }> = {
+  showreel: { kicker: "Lobby", title: "Showreel" },
+  gallery: { kicker: "Intermission", title: "Observation gallery" },
+};
+
+const keyOf = (s: Slot) =>
+  s.kind === "room" ? `room:${s.roomIndex}` : s.kind === "stop" ? `stop:${s.stop}` : s.kind;
+
+/** Which non-room dwell stop the camera is parked on (same 0.85 bar the Rig
+ *  uses for room focus). A rAF loop reads the camera playhead ref and sets
+ *  state ONLY when the answer changes — coarse, never per frame. */
+function useDwellStop(): Stop | null {
+  const [stop, setStop] = useState<Stop | null>(null);
+  useEffect(() => {
+    let raf = 0;
+    let last: Stop | null = null;
+    const loop = () => {
+      const p = scrollRefs.cameraProgress ?? scrollRefs.progress;
+      const next: Stop | null =
+        featureFocusAt(p) > 0.85 ? "showreel" : galleryFocusAt(p) > 0.85 ? "gallery" : null;
+      if (next !== last) {
+        last = next;
+        setStop(next);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return stop;
+}
+const SETTLE_MS = 160;
+const TRANSIT_SETTLE_MS = 600;
+const GHOST_MS = 280;
+const DEFAULT_ACCENT = "#ff5c38";
+// The bridge keeps the brand accent: it is the signature "talk." colour and
+// reads as the complement of the bridge's blue light.
+const BRIDGE_ACCENT = DEFAULT_ACCENT;
+const YEAR = new Date().getFullYear();
+
+type SlotState = { current: Slot; ghost: Slot | null; gen: number };
+
+export default function ProjectLink() {
+  const focusedRoom = useScrollStore((s) => s.focusedRoom);
+  const sectionIndex = useShipSection();
+  const onBridge = sectionIndex === SECTIONS.length - 1;
+  const roomIndex = focusedRoom ? ROOMS.findIndex((r) => r.id === focusedRoom) : -1;
+  const dwellStop = useDwellStop();
+
+  const target: Slot = onBridge
+    ? { kind: "bridge" }
+    : roomIndex >= 0
+      ? { kind: "room", roomIndex }
+      : dwellStop
+        ? { kind: "stop", stop: dwellStop }
+        : sectionIndex === 0
+          ? { kind: "hero" }
+          : { kind: "transit" };
+  const targetKey = keyOf(target);
+
+  const [slot, setSlot] = useState<SlotState>(() => ({ current: target, ghost: null, gen: 0 }));
   const [dossierOpen, setDossierOpen] = useState(false);
-  const elRef = useRef<HTMLDivElement>(null);
   const dossierBtnRef = useRef<HTMLButtonElement>(null);
-  // Latest focus target, for async callbacks (exit onComplete / the mount
-  // rAF). Written in an every-render effect, never during render.
-  const targetRef = useRef<Room | null>(null);
+  const shownKey = keyOf(slot.current);
+
+  // Latest target for the timer callback (written every render, read async).
+  const targetRef = useRef<Slot>(target);
   useEffect(() => {
     targetRef.current = target;
   });
-  // True while an exit tween is mid-flight (R9). If focus flickers back to
-  // the shown room inside the 0.4s exit window (A→null→A, or A→B→A at a bay
-  // boundary — Rig publishes focus from a hard threshold with no hysteresis),
-  // the effect cleanup kills the tween at an intermediate opacity/y, `shown`
-  // never changes, and the entrance effect can't re-run — the row used to
-  // stay frozen half-faded. This flag lets the reconcile below detect the
-  // interrupted exit and tween the row back to fully visible.
-  const exitingRef = useRef(false);
 
-  // Reconcile the displayed pill row with the focused room ("wait" semantics).
-  // Frozen while the dossier is open (Lenis is stopped, so focus can't drift —
-  // this guard just makes that invariant explicit).
+  // Settle: a target that HOLDS for its debounce replaces the shown slot.
+  // Frozen while the dossier is open (Lenis is stopped anyway).
   useEffect(() => {
-    if (dossierOpen) return;
-    if ((shown?.id ?? null) === targetId) {
-      // Focus is back on the row we already show. Normally nothing to do —
-      // unless an exit tween was killed mid-flight (see exitingRef above):
-      // restore the row instead of leaving it half-faded.
-      if (exitingRef.current) {
-        exitingRef.current = false;
-        const el = elRef.current;
-        if (el) {
-          const tween = gsap.to(el, {
-            opacity: 1,
-            y: 0,
-            duration: 0.3,
-            ease: "power4.out",
-            overwrite: "auto",
-          });
-          return () => {
-            tween.kill();
-          };
-        }
-      }
-      return;
-    }
-    const el = elRef.current;
-    if (el && shown) {
-      // animate the old row out, then swap (or clear) in onComplete
-      exitingRef.current = true;
-      const tween = gsap.to(el, {
-        opacity: 0,
-        y: 18,
-        duration: 0.4,
-        ease: "power4.out",
-        overwrite: "auto", // kill a still-running entrance on the same row
-        onComplete: () => {
-          exitingRef.current = false;
-          setShown(targetRef.current);
-        },
-      });
-      return () => {
-        tween.kill();
-      };
-    }
-    // nothing shown yet — mount the new row on the next frame (the entrance
-    // effect below animates it in). rAF keeps this effect setState-free.
-    const raf = requestAnimationFrame(() => setShown(targetRef.current));
-    return () => cancelAnimationFrame(raf);
-  }, [targetId, shown, dossierOpen]);
+    if (dossierOpen || targetKey === shownKey) return;
+    const wait = targetKey === "transit" ? TRANSIT_SETTLE_MS : SETTLE_MS;
+    const t = window.setTimeout(() => {
+      const next = targetRef.current;
+      setSlot((s) =>
+        keyOf(s.current) === keyOf(next) ? s : { current: next, ghost: s.current, gen: s.gen + 1 },
+      );
+    }, wait);
+    return () => window.clearTimeout(t);
+  }, [targetKey, shownKey, dossierOpen]);
 
-  // Entrance: whenever a pill row (re)mounts with new content.
-  useLayoutEffect(() => {
-    const el = elRef.current;
-    if (!el || !shown) return;
-    const tween = gsap.fromTo(
-      el,
-      { opacity: 0, y: 18 },
-      { opacity: 1, y: 0, duration: 0.4, ease: "power4.out" },
+  // Drop the ghost once its fade has played (cosmetic only — see header).
+  useEffect(() => {
+    if (!slot.ghost) return;
+    const gen = slot.gen;
+    const t = window.setTimeout(
+      () => setSlot((s) => (s.gen === gen ? { ...s, ghost: null } : s)),
+      GHOST_MS,
     );
-    return () => {
-      tween.kill();
-    };
-  }, [shown]);
+    return () => window.clearTimeout(t);
+  }, [slot.ghost, slot.gen]);
 
-  const project = shown?.project;
-  if (!shown || !project) return null;
-  const href = project.href && project.href !== "#" ? project.href : null;
-  const dossier = project.dossier ?? null;
-  if (!href && !dossier) return null;
+  const shown = slot.current;
 
-  /* Shared HUD-chip styling. The chips are position:relative via .hud-frame —
-     the old single-pill needed an inline position:fixed override because
-     .hud-frame's relative beat Tailwind's layered `fixed` on the SAME element;
-     the fixed positioning now lives on the plain wrapper div instead, so the
-     cascade conflict is gone. */
-  const chip =
-    "hud-frame pointer-events-auto flex items-center gap-3 bg-bg-elev/80 px-6 py-3 " +
-    "font-mono text-[0.7rem] uppercase tracking-[0.25em] text-ink backdrop-blur-md " +
-    "transition-colors hover:text-ink";
-  const brackets = (
-    <>
-      <span aria-hidden className="hud-bracket tl" />
-      <span aria-hidden className="hud-bracket tr" />
-      <span aria-hidden className="hud-bracket bl" />
-      <span aria-hidden className="hud-bracket br" />
-    </>
+  // Publish the shown room's accent to :root (eased by the registered
+  // @property transition in globals.css) — nav, focus rings, rail and
+  // buttons all retint together.
+  const room = shown.kind === "room" ? ROOMS[shown.roomIndex] : null;
+  const accent = room ? room.accent : shown.kind === "bridge" ? BRIDGE_ACCENT : DEFAULT_ACCENT;
+  useEffect(() => {
+    document.documentElement.style.setProperty("--hud-accent", accent);
+  }, [accent]);
+
+  // Portal target for the dialog: the dock uses backdrop-filter, which would
+  // otherwise become the containing block of the fixed-position overlay.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
   );
-  const glow = { boxShadow: `0 0 26px -10px ${shown.accent}` };
+
+  const project = room?.project;
+  const dossier = project?.dossier ?? null;
+
+  /** One slot's content. `live` = the interactive current slot; the ghost
+   *  renders the same markup inert (no refs, no handlers reachable). */
+  const renderSlot = (sl: Slot, live: boolean): React.ReactNode => {
+    if (sl.kind === "hero") return <ScrollCue label="Scroll to board" />;
+    if (sl.kind === "transit")
+      return (
+        <span aria-hidden className="ui-kicker">
+          <span className="ui-dot ui-breathe" />
+          In transit
+        </span>
+      );
+    if (sl.kind === "stop") {
+      const c = STOP_COPY[sl.stop];
+      return (
+        <div aria-hidden className="flex flex-col items-start gap-2">
+          <span className="ui-kicker ui-kicker--dash">
+            {c.kicker}
+            <span className="desktop:hidden"> · {c.title}</span>
+          </span>
+          <span className="hidden font-display text-title text-ink desktop:block">
+            {c.title}
+            <span style={{ color: "var(--hud-accent)" }}>.</span>
+          </span>
+        </div>
+      );
+    }
+    if (sl.kind === "bridge")
+      return (
+        // Phones stack the two credits as lines (no separator left dangling
+        // at a wrap); desktop runs them on one line with a hairline slash.
+        <p aria-hidden className="ui-kicker flex-col items-start gap-1.5 desktop:flex-row desktop:items-center desktop:gap-3">
+          <span>
+            &copy; {YEAR} {SITE.name}
+          </span>
+          <span className="hidden text-line-strong desktop:inline">/</span>
+          <span>Astronaut model · PW Wu (CC-BY)</span>
+        </p>
+      );
+    const r = ROOMS[sl.roomIndex];
+    const pr = r.project;
+    const url = pr?.href && pr.href !== "#" ? pr.href : null;
+    const dos = pr?.dossier ?? null;
+    return (
+      <div className="flex flex-col items-start gap-3 desktop:flex-row desktop:items-center desktop:gap-7">
+        {/* exhibit tag — the dock's "now showing". Phones drop the title:
+            the in-world card right above already names the room. */}
+        <div className="flex flex-col items-start gap-2">
+          <span className="ui-kicker ui-kicker--dash tabular-nums">
+            Exhibit {r.index}
+            <span className="text-ink-3/70"> / {String(ROOMS.length).padStart(2, "0")}</span>
+          </span>
+          <span className="hidden font-display text-title text-ink desktop:block">
+            {r.title}
+            <span style={{ color: "var(--hud-accent)" }}>.</span>
+          </span>
+        </div>
+
+        {(url || dos) && (
+          <div className="flex items-center gap-2">
+            {url && (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-cursor
+                tabIndex={live ? undefined : -1}
+                aria-label={`Visit live — ${r.title} (opens in a new tab)`}
+                className="ui-btn ui-btn--primary ui-hit"
+                onClick={live ? () => track("project_link_clicked", { project: pr!.id, href: url }) : undefined}
+              >
+                <span className="ui-dot" aria-hidden />
+                Visit live
+                <span aria-hidden className="text-ink-2">
+                  ↗
+                </span>
+              </a>
+            )}
+            {dos && (
+              <button
+                ref={live ? dossierBtnRef : undefined}
+                type="button"
+                data-cursor
+                tabIndex={live ? undefined : -1}
+                aria-haspopup="dialog"
+                aria-label={`Dossier — ${r.title} case study`}
+                className={`ui-btn ui-hit ${url ? "" : "ui-btn--primary"}`}
+                onClick={
+                  live
+                    ? () => {
+                        setDossierOpen(true);
+                        track("dossier_opened", { project: pr!.id });
+                      }
+                    : undefined
+                }
+              >
+                {!url && <span className="ui-dot" aria-hidden />}
+                Dossier
+                <svg
+                  aria-hidden
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  className="opacity-70"
+                >
+                  <path d="M2.5 2.5h7v7M9.5 2.5l-7 7" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
-      <div
-        ref={elRef}
-        key={shown.id}
-        className="pointer-events-none fixed bottom-[6vh] left-1/2 z-40 flex -translate-x-1/2 items-center gap-3"
-        style={{ "--hud-accent": shown.accent } as React.CSSProperties}
-      >
-        {href && (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-cursor
-            className={chip}
-            style={glow}
-            onClick={() =>
-              track("project_link_clicked", { project: project.id, href })
-            }
+      <div className="pointer-events-none relative min-w-0">
+        {slot.ghost && (
+          <div
+            key={`ghost-${slot.gen}`}
+            aria-hidden
+            inert
+            className="ui-slot-out pointer-events-none absolute bottom-0 left-0 whitespace-nowrap"
           >
-            {brackets}
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={{ background: shown.accent }}
-              aria-hidden
-            />
-            Visit {project.title}
-            <span aria-hidden>↗</span>
-          </a>
+            {renderSlot(slot.ghost, false)}
+          </div>
         )}
-        {dossier && (
-          <button
-            ref={dossierBtnRef}
-            type="button"
-            data-cursor
-            className={chip}
-            style={glow}
-            onClick={() => {
-              setDossierOpen(true);
-              track("dossier_opened", { project: project.id });
-            }}
-          >
-            {brackets}
-            {!href && (
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ background: shown.accent }}
-                aria-hidden
-              />
-            )}
-            Open dossier
-            <span aria-hidden>▸</span>
-          </button>
-        )}
+        <div key={`live-${slot.gen}`} data-slot={shownKey} className={slot.gen > 0 ? "ui-slot-in" : undefined}>
+          {renderSlot(shown, true)}
+        </div>
       </div>
 
-      {dossierOpen && dossier && (
-        <DossierOverlay
-          project={project}
-          accent={shown.accent}
-          onClose={() => {
-            setDossierOpen(false);
-            // Focus returns to the trigger pill (dialog contract).
-            requestAnimationFrame(() => dossierBtnRef.current?.focus());
-          }}
-        />
-      )}
+      {mounted &&
+        dossierOpen &&
+        project &&
+        dossier &&
+        room &&
+        createPortal(
+          <DossierOverlay
+            project={project}
+            accent={room.accent}
+            onClose={() => {
+              setDossierOpen(false);
+              // Focus returns to the trigger (dialog contract).
+              requestAnimationFrame(() => dossierBtnRef.current?.focus());
+            }}
+          />,
+          document.body,
+        )}
     </>
   );
 }

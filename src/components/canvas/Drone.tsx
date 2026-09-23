@@ -57,6 +57,8 @@ const CLIP_RUN = "CharacterArmature|Run";
 
 const QUIP_HOLD = 4.5; // seconds a bubble stays up
 const INK = "#f4f1ea";
+/** Linear multiplier on the bubble textures (bloom-safe text, see mesh). */
+const BUBBLE_TINT = /* @__PURE__ */ new THREE.Color().setRGB(0.8, 0.8, 0.8, THREE.LinearSRGBColorSpace);
 
 const ROOM_QUIPS: Record<string, string> = {
   selfquest: "1.3M downloads. i counted.",
@@ -141,8 +143,13 @@ const _qAim = new THREE.Quaternion();
 const _qRoll = new THREE.Quaternion();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _camRight = new THREE.Vector3();
+const _toCam = new THREE.Vector3();
+/** Minimum escort ↔ camera distance on desktop (dwell perches sit ~3–4). */
+const PERSONAL_R = 2.8;
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** Materialise-in duration on first reveal (smootherstep). */
+const APPEAR_S = 0.9;
 
 export default function Drone({ mobile = false }: { mobile?: boolean }) {
   const reduced = useReducedMotion();
@@ -155,8 +162,6 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
   const tailMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const slabRef = useRef<THREE.Mesh>(null);
   const scanRef = useRef<THREE.Group>(null);
-  const navARef = useRef<THREE.Mesh>(null);
-  const navBRef = useRef<THREE.Mesh>(null);
 
   const t = useRef(0);
   const idleT = useRef(0);
@@ -173,6 +178,11 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
   const pokeIdx = useRef(-1);
   const pokeAt = useRef(-99);
   const bodyScale = useRef(1);
+  // Materialise-in (critic K/ev105): CompileReveal flips the rig's parent
+  // visible in ONE frame, so the chassis + bubble used to pop in at full
+  // size on a static camera. Timestamp of the first frame the rig is
+  // actually drawable (walks .visible up the parents), in seconds.
+  const appearAt = useRef<number | null>(null);
   const rollAt = useRef(-99); // t.current when a barrel roll started
   const bobKick = useRef(0); // reduced-motion 5th-poke hop (decays in-frame)
 
@@ -266,7 +276,41 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       const mat = mesh.material as THREE.MeshStandardMaterial;
       if (mat && mat.isMeshStandardMaterial) {
         mat.emissive.copy(mat.color);
-        mat.emissiveIntensity = 0.32;
+        mat.emissiveIntensity = 0.28;
+        // Satin, not gloss. The GLB ships roughness 0.27 / metalness 0.4:
+        // flying past the bay pool lights that lobe spiked to 65–370 linear
+        // (flash-trap census, 139 hot frames in one sweep) and every spike
+        // bloomed into a white burst around the escort — the most frequent
+        // "random white flash". 0.58 keeps a soft sheen with peaks < ~10.
+        mat.roughness = Math.max(mat.roughness, 0.58);
+        mat.metalness = Math.min(mat.metalness, 0.25);
+        // Highlight shoulder. Even satin, the white hull flying close to the
+        // lens under a ceiling troffer / gate spot measured max 3.6 linear
+        // (p99 1.9, ~9 % of its box over the 0.78 bloom threshold — HDR
+        // census at p 0.523 on the 0.50→0.60 walk): the whole escort bloomed
+        // into a white-orange puff that swelled and faded as it passed under
+        // each fixture — the "random white flash" still seen mid-travel.
+        // A soft per-channel-peak rolloff above 0.7 (asymptote ~1.2) leaves
+        // every normally-lit pixel untouched and caps that puff to a faint
+        // rim glow. Drone-only program (own cache key); no light changes.
+        if (!mat.userData.droneShoulder) {
+          mat.userData.droneShoulder = true;
+          mat.onBeforeCompile = (shader) => {
+            shader.fragmentShader = shader.fragmentShader.replace(
+              "#include <opaque_fragment>",
+              /* glsl */ `#include <opaque_fragment>
+              {
+                float pk = max(gl_FragColor.r, max(gl_FragColor.g, gl_FragColor.b));
+                if (pk > 0.7) {
+                  float ex = pk - 0.7;
+                  gl_FragColor.rgb *= (0.7 + ex / (1.0 + ex * 2.0)) / pk;
+                }
+              }`,
+            );
+          };
+          mat.customProgramCacheKey = () => "drone-shoulder-v1";
+          mat.needsUpdate = true;
+        }
       }
     });
   }, []);
@@ -290,10 +334,11 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
   // Scan beam: a volumetric-looking cone instead of a flat additive wedge.
   // Brightness falls off along the beam AND toward its silhouette (view-angle
   // term), so it reads as light in air and no longer veils the info panels it
-  // passes in front of; faint scan bands sweep outward from the lens.
+  // passes in front of. STEADY: the old scan bands raced outward at ~1 Hz
+  // (sin(uv*28 + t*7)) — a travelling light pulse, banned by the motion rules.
   const coneMat = useMemo(() => {
     const m = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color("#9fd8ff") } },
+      uniforms: { uColor: { value: new THREE.Color("#9fd8ff") } },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
         varying vec3 vN;
@@ -306,17 +351,15 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: /* glsl */ `
-        uniform float uTime;
         uniform vec3 uColor;
         varying vec2 vUv;
         varying vec3 vN;
         varying vec3 vV;
         void main() {
           // coneGeometry uv.y: 0 at the open base → 1 at the apex (lens)
-          float along = pow(vUv.y, 1.6);
+          float along = pow(clamp(vUv.y, 0.0, 1.0), 1.6);
           float facing = pow(abs(dot(normalize(vN), normalize(vV))), 3.0);
-          float bands = 0.75 + 0.25 * smoothstep(0.7, 1.0, sin(vUv.y * 28.0 + uTime * 7.0));
-          float a = along * facing * bands * 0.2;
+          float a = along * facing * 0.17;
           gl_FragColor = vec4(uColor * a, 1.0);
         }`,
       transparent: true,
@@ -418,14 +461,36 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     if (!g || !body) return;
     const dt = Math.min(rawDt, 1 / 30);
 
+    // 0 → 1 over APPEAR_S, eased, from the first drawable frame. Wall clock
+    // (not t, which is frozen under reduced motion — there it's simply 1).
+    const nowS = performance.now() / 1000;
+    if (appearAt.current === null) {
+      let drawable = true;
+      for (let q: THREE.Object3D | null = g; q; q = q.parent) {
+        if (!q.visible) {
+          drawable = false;
+          break;
+        }
+      }
+      if (drawable) appearAt.current = nowS;
+    }
+    const au = appearAt.current === null ? 0 : clamp01((nowS - appearAt.current) / APPEAR_S);
+    const appear = reduced ? 1 : au * au * au * (au * (au * 6 - 15) + 10);
+
     // Match the frozen Rig under reduced motion (camera parks at p=0.05).
-    const p = reduced ? 0.05 : scrollRefs.progress;
+    // Keyed to the CAMERA playhead (Rig's spring), not raw scroll: on a flick
+    // or nav jump raw progress races through every bay band, and the escort
+    // peeled off to park + popped a quip (with its chirp) for exhibits the
+    // camera never showed.
+    const p = reduced ? 0.05 : scrollRefs.cameraProgress;
     const f = focusAt(p);
     const ease = f.room ? f.ease : 0;
     const side = f.room ? f.room.side : 0;
 
     if (!reduced) t.current += dt;
-    const bob = reduced ? 0 : Math.sin(t.current * 2.1) * 0.08;
+    // hover bob, calmed while perched at a bay (keeps the quip bubble from
+    // riding up under the DOM nav pill on the upswing)
+    const bob = reduced ? 0 : Math.sin(t.current * 2.1) * 0.08 * (1 - 0.6 * ease);
 
     // Position: lead the camera down the hall; while a bay is focused, peel
     // off to a PARKING SPOT high beside the bay plaque — visible at the frame
@@ -448,17 +513,24 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       // top corner of the bay opening: inside the dwell frame (the ~47°
       // half-fov cuts at ±~2.4 lateral by the wall) but above/beside the
       // screen, info panel and label sightlines.
-      const parkX = f.room.x + 1.9;
+      // always the bay's SCREEN-RIGHT corner (the right lane beside the info
+      // panel). +z bays are mirrored (screen right = -x there); the old fixed
+      // +1.9 parked the escort on +z bays' LEFT column, over the tall
+      // showcase boards (QA: SelfAware memory board behind the drone + beam).
+      const parkX = f.room.x - 1.9 * side;
       tx = followX + (parkX - followX) * ease;
       tz = side * (HALF_W - 1.1) * ease;
-      ty = HOVER_Y + 1.05 * ease + bob; // perch peeks over the info panel; bubble stays in frame
+      // perch peeks over the info panel; 0.9 (was 1.05) seats the quip
+      // bubble in the band between the DOM nav pill and the room label
+      ty = HOVER_Y + 0.9 * ease + bob;
     } else if (parks && gf > 0) {
       // observation gallery: hover before the right panes, in frame with the
       // adrift pilot it's about to gossip about
       const parkX = GALLERY_X + 2.0;
       tx = followX + (parkX - followX) * gf;
       tz = GALLERY_SIDE * (HALF_W - 1.1) * gf;
-      ty = HOVER_Y + 0.75 * gf + bob;
+      // 0.95 (was 0.75): lifts the quip bubble clear of the pilot's name tag
+      ty = HOVER_Y + 0.95 * gf + bob;
     } else if (parks && ff > 0) {
       // entrance showreel: pull aside to the panel's edge and watch it with
       // you instead of drifting out of frame down the corridor
@@ -471,12 +543,21 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       // dead in front of the lens once the camera faces the showreel/glazing
       // (QA: giant escort blocking the showreel). Fly on ahead, out of frame.
       tx = followX + 5 * Math.max(ff, gf);
+    } else if (!parks && p < 0.04) {
+      // mobile, sealed airlock: the lead spot sat dead over the lock hub in
+      // the portrait frame (the p=0 hero). Wait on the far side of the door
+      // (as on desktop) and appear in the corridor as the leaves part.
+      const k = 1 - clamp01((p - 0.02) / 0.02);
+      tx = followX + 4 * k;
     } else if (bd > 0) {
-      // dock low over the port console row, clear of the bridge window and
-      // the contact copy on the right half of the frame
+      // dock low over the STARBOARD console row (screen right), clear of the
+      // bridge window — the DOM contact block ("Let's talk" + email) now owns
+      // the left half, and the port dock put the escort and its quip bubble
+      // right on top of the email button
       tx = followX + (167.5 - followX) * bd;
-      tz = -2.3 * bd;
-      ty = HOVER_Y + bob - 0.32 * bd;
+      tz = 2.3 * bd;
+      // high enough that the quip bubble clears the LINKEDIN kiosk's head
+      ty = HOVER_Y + bob + 0.05 * bd;
     }
 
     // reduced-motion 5th-poke payoff: a modest hop instead of the barrel roll
@@ -490,6 +571,17 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     g.position.x = damp(g.position.x, tx, 5, dt);
     g.position.y = damp(g.position.y, ty, 5, dt);
     g.position.z = damp(g.position.z, tz, 5, dt);
+    // materialise: grow from a point (the bubble's opacity follows below)
+    g.scale.setScalar(Math.max(1e-3, appear));
+    // Personal space: never closer than PERSONAL_R to the lens. Between
+    // parks (e.g. gallery → a +z bay, as the camera yaws across the hall)
+    // the escort's path could graze the camera and fill the frame with a
+    // white chassis for a few frames — a full-screen brightness jump.
+    _toCam.subVectors(g.position, camera.position);
+    const dCam = _toCam.length();
+    if (!mobile && dCam < PERSONAL_R && dCam > 1e-3) {
+      g.position.copy(camera.position).addScaledVector(_toCam, PERSONAL_R / dCam);
+    }
 
     // Idle: no scroll for 4s → hover-turn to face the camera.
     if (!reduced && Math.abs(scrollRefs.velocity) < 0.02) idleT.current += dt;
@@ -507,7 +599,7 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
     if (parks && f.room) {
       // aim INTO the bay at the prop cluster — the scan beam then runs
       // behind the floating info panel's plane instead of veiling it
-      _look.lookAt(f.room.x - 0.4, 0.85, f.room.side * (HALF_W + 2.3));
+      _look.lookAt(f.room.x + 0.4 * side, 0.85, f.room.side * (HALF_W + 2.3));
       _qAim.copy(_look.quaternion);
       _qTravel.slerp(_qAim, ease);
     } else if (parks && gf > 0) {
@@ -571,21 +663,20 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       runA.setEffectiveWeight(runWeight.current);
     }
 
-    // Scan cone: grows over ~0.4s when a bay (or the pilot) is focused.
-    const scanOn = !reduced && (ease > 0.55 || gf > 0.55);
-    scanScale.current = damp(scanScale.current, scanOn ? 1 : 0.001, 9, dt);
-    coneMat.uniforms.uTime.value = t.current;
+    // Scan cone: eases in (~0.7s) while the gallery pilot is in focus.
+    // Gallery only: at a bay the cone crossed the info panel from the
+    // perch and veiled its copy. At the gallery it scans the drifting pilot.
+    const scanOn = !reduced && gf > 0.55;
+    // eased grow (was rate 9 ≈ a 0.25s pop — read as a flash on bay arrival)
+    scanScale.current = damp(scanScale.current, scanOn ? 1 : 0.001, 3.5, dt);
     const scan = scanRef.current;
     if (scan) {
       scan.scale.setScalar(scanScale.current);
       scan.visible = scanScale.current > 0.02;
     }
 
-    // Nav lights: alternating blink on a timer (steady under reduced motion).
-    const a = navARef.current;
-    const b = navBRef.current;
-    if (a) a.visible = reduced ? true : t.current % 1.4 < 0.45;
-    if (b) b.visible = reduced ? true : (t.current + 0.7) % 1.4 < 0.45;
+    // Nav lights are STEADY (see the meshes): the old 1.4s alternating hard
+    // blink broke the no-blink rule and read as a strobe at the frame edge.
 
     /* ── speech bubble: pick a line, redraw ONLY on change, fade + billboard ── */
     const bub = bubbleRef.current;
@@ -603,10 +694,12 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           key = `poke:${pokeIdx.current}:${Math.floor(pokeAt.current * 10)}`;
           text = POKE_QUIPS[pokeIdx.current % POKE_QUIPS.length];
           accent = "#ffd27f";
-        } else if (p > BRIDGE_ENTER_P + 0.005) {
+        } else if (parks && p > BRIDGE_ENTER_P + 0.005) {
+          // (desktop only: on a portrait phone the starboard dock sits past
+          // the frame edge and the bubble clipped half-off-screen)
           // (small offset past arrival so the dock quip lands after the turn)
           key = "bridge";
-          text = "bridge ahead. don't touch the big lever.";
+          text = "end of the line. don't touch the big lever.";
         } else if (parks && gf > 0.6) {
           key = "gallery";
           text = "that's the pilot. he's fine. probably.";
@@ -630,6 +723,8 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           text = idleQuips[idleQuipIdx.current];
         }
       }
+      // phone at the bridge: the dock is past the frame edge — no quips at all
+      if (!parks && bd > 0.3) key = null;
       if (key !== quipKey.current) {
         quipKey.current = key;
         if (key && text) {
@@ -641,10 +736,12 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       }
       const showing =
         !reduced && quipKey.current !== null && t.current - quipShownAt.current < QUIP_HOLD;
-      quipOp.current = damp(quipOp.current, showing ? 1 : 0, 8, dt);
-      bubMat.opacity = quipOp.current;
-      if (tailMatRef.current) tailMatRef.current.opacity = quipOp.current;
-      bub.visible = quipOp.current > 0.02;
+      // eased fade (rate 8 snapped the bubble in within ~0.3s — a pop)
+      quipOp.current = damp(quipOp.current, showing ? 1 : 0, 4.5, dt);
+      const bubOp = quipOp.current * appear;
+      bubMat.opacity = bubOp;
+      if (tailMatRef.current) tailMatRef.current.opacity = bubOp;
+      bub.visible = bubOp > 0.02;
       const s = 0.85 + 0.15 * quipOp.current;
       bub.scale.setScalar(s);
       bub.quaternion.copy(camera.quaternion); // billboard (parent is unrotated)
@@ -656,7 +753,9 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
       // bot and still touching the slab's near end.
       const slab = slabRef.current;
       if (slab) {
-        const parkBlend = Math.max(ease, gf, ff, bd);
+        // docked at the bridge the escort is already well inside the frame —
+        // a full slide parked the slab on top of the LINKEDIN kiosk
+        const parkBlend = Math.max(ease, gf, ff, bd * 0.2);
         _camRight.setFromMatrixColumn(camera.matrixWorld, 0);
         const sideSign =
           Math.sign(
@@ -705,14 +804,15 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           </mesh>
         </group>
 
-        {/* blinking nav lights on the arm mounts */}
-        <mesh ref={navARef} position={[-0.28, 0.08, 0]}>
+        {/* steady port/starboard nav lights on the arm mounts — held just
+            under the bloom threshold so they read as indicators, not flares */}
+        <mesh position={[-0.28, 0.08, 0]}>
           <sphereGeometry args={[0.032, 8, 8]} />
-          <meshBasicMaterial color="#ff4b4b" toneMapped={false} />
+          <meshBasicMaterial color="#e2504a" toneMapped={false} />
         </mesh>
-        <mesh ref={navBRef} position={[0.28, 0.08, 0]}>
+        <mesh position={[0.28, 0.08, 0]}>
           <sphereGeometry args={[0.032, 8, 8]} />
-          <meshBasicMaterial color="#59ffa1" toneMapped={false} />
+          <meshBasicMaterial color="#4fcf8e" toneMapped={false} />
         </mesh>
       </group>
 
@@ -739,6 +839,10 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           <meshBasicMaterial
             ref={bubbleMatRef}
             map={bubble.tex}
+            // linear 0.8: INK text lands at ~0.72 luminance, under the 0.78
+            // bloom threshold — the bubble used to fade in with a glowing halo
+            // (a white flash beside the drone on every quip)
+            color={BUBBLE_TINT}
             transparent
             opacity={0}
             toneMapped={false}
@@ -750,6 +854,7 @@ export default function Drone({ mobile = false }: { mobile?: boolean }) {
           <meshBasicMaterial
             ref={tailMatRef}
             map={bubble.tailTex}
+            color={BUBBLE_TINT}
             transparent
             opacity={0}
             toneMapped={false}

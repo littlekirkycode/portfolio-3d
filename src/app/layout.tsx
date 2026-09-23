@@ -5,8 +5,6 @@ import SceneCanvas from "@/components/canvas/SceneCanvas";
 import Grain from "@/components/ui/Grain";
 import Nav from "@/components/ui/Nav";
 import ProgressBar from "@/components/ui/ProgressBar";
-import ProjectLink from "@/components/ui/ProjectLink";
-import MobileStops from "@/components/ui/MobileStops";
 import Cursor from "@/components/ui/Cursor";
 import AnalyticsProvider from "@/components/providers/AnalyticsProvider";
 import PreloadResources from "./preload-resources";
@@ -73,6 +71,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: "#07070a",
+  // Dark UA canvas: no white first paint / white overscroll behind the page.
+  colorScheme: "dark",
 };
 
 export default function RootLayout({
@@ -84,6 +84,9 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${display.variable} ${body.variable} ${mono.variable}`}
+      // Inline so the very first paint is the hull's dark even before the
+      // stylesheet lands — never a white frame on load or refresh.
+      style={{ backgroundColor: "#07070a", colorScheme: "dark" }}
     >
       <body className="bg-bg text-ink font-body antialiased">
         {/* Head preload hints for the p=0-critical shell assets (SSR'd into <head>) */}
@@ -94,10 +97,14 @@ export default function RootLayout({
             navigation (WCAG 2.4.3); it is position:fixed, so visual layout
             is unchanged. */}
         <Nav />
-        {children}
+        {/* The bottom dock: stop pager, context slot (scroll cue / exhibit
+            CTAs / credit), ship controls, chapter rail. Rendered BEFORE the
+            sections (it is position:fixed, so layout is unchanged) so the
+            keyboard reaches the stop pager, the room's actions and the audio
+            toggle straight after the nav — not after flying the whole ship
+            to the bridge's email link. */}
         <ProgressBar />
-        <ProjectLink />
-        <MobileStops />
+        {children}
         <Grain />
         <Cursor />
         {/* No-op unless NEXT_PUBLIC_POSTHOG_KEY is set at build (see README). */}

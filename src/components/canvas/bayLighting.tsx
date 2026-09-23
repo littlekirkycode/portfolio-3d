@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { WALL_H, ALCOVE_OPEN_W, ALCOVE_DEPTH, type Room } from "./hallConfig";
+import { accentLightShare } from "./theme";
 import {
   makeDiffuserMaterial,
   makeHaloMaterial,
@@ -76,6 +77,9 @@ export function BayArchitecture({ room }: { room: Room }) {
   const mats = useMemo(() => {
     const accent = new THREE.Color(room.accent);
     const panelTint = PANEL_WHITE.clone().lerp(accent, 0.18);
+    // washes are light on LARGE surfaces: kept soft, and warm accents get
+    // less (they go muddy salmon / mustard on the grey hull)
+    const k = accentLightShare(accent);
     return {
       housing: new THREE.MeshStandardMaterial({ color: "#161a25", roughness: 0.45, metalness: 0.7 }),
       panel: makeDiffuserMaterial(panelTint, 1.6, BAY_PANEL.w / BAY_PANEL.d),
@@ -88,9 +92,9 @@ export function BayArchitecture({ room }: { room: Room }) {
         color: accent.clone().multiplyScalar(0.75),
         toneMapped: false,
       }),
-      washTop: makeWashMaterial(accent, 0.34),
-      washSide: makeWashMaterial(accent, 0.24),
-      washBase: makeWashMaterial(accent, 0.26),
+      washTop: makeWashMaterial(accent, 0.22 * k),
+      washSide: makeWashMaterial(accent, 0.15 * k),
+      washBase: makeWashMaterial(accent, 0.16 * k),
     };
   }, [room.accent]);
   useEffect(() => () => Object.values(mats).forEach((m) => m.dispose()), [mats]);

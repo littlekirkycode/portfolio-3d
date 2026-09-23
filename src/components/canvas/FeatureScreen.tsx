@@ -2,39 +2,45 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { useTexture } from "@react-three/drei";
+import { RoundedBox, useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { PROJECTS } from "@/lib/constants";
-import { screenVertex, screenFragment } from "./shaders";
+import { displayVertex, displayFragment } from "./shaders";
 import { FEATURE_X, FEATURE_GLASS_Z, FEATURE_RECESS_DEPTH } from "./hallConfig";
 import { familyVar, hexA, roundRect, wrapText } from "./canvas2d";
+import { GLOW, INK, NEUTRAL } from "./theme";
 import { withBase } from "@/lib/asset";
-
-const INK = "#f4f1ea";
+import { useReducedMotion } from "@/lib/useReducedMotion";
+import { useDeferredDispose } from "./bayScreens";
 
 const FW = 4.8; // 16:9 feature panel (sized to fit the FOV head-on from across the hall)
 const FH = 2.7;
-const BAR_H = 0.24; // letterbox bars — slide art keeps y ∈ [~90, ~810] of the 900px canvas clear
-const HOLD = 6; // seconds each slide dwells (long enough to read from the camera dwell)
-const WIPE = 0.4; // filmstrip-wipe duration — short + clean, no mid-dissolve mush
+const BEZEL = 0.08;
+const CHIN = 0.16; // bottom bezel carrying the reel progress hairline
+const HOLD = 6; // seconds each slide rests (long enough to read from the camera dwell)
+const FADE = 1.8; // eased crossfade under a soft dim — no swipes, no cuts
+const ZOOM = 0.012; // each slide settles from 1+ZOOM → 1 across its life
 
-/** Damp rate for the slide-accent tint chase (light + glow quads + rim). */
-const TINT_RATE = 3.2;
+/** Damp rate for the slide-accent tint chase (light + glow quads + trim):
+ *  slow enough that a slide change is a gentle colour drift, never a pop. */
+const TINT_RATE = 1.1;
+
+const ease = (k: number) => k * k * (3 - 2 * k);
 
 /**
- * Wide cinematic SHOWREEL screen near the corridor entrance — the big "movie
- * screen" you glide past before the first bay, now recessed into its own wall
- * niche (FEATURE_RECESS_DEPTH). Every project gets a designed full-bleed frame
- * (title block + description + chips on the left, device screenshot or a giant
- * index numeral on an accent panel on the right, slide dots along the bottom)
- * rendered to a CanvasTexture — with baked scanlines / grain / vignette — and
- * fed through the existing CRT screen shader with a clean slide-wipe between
- * frames. The fixture THROWS light: a gunmetal casing with a thin breathing
- * accent rim, an emissive backwash behind the housing, and a per-slide accent
- * that damp-lerps a front pointLight + a floor glow pool + a wall wash, so
- * every slide change visibly repaints the lobby.
+ * The lobby SHOWREEL — a wide cinema display recessed into its own wall niche
+ * (FEATURE_RECESS_DEPTH) that you glide past before the first bay. Same
+ * fixture language as the bay hero displays (bayScreens.tsx): anodised bezel
+ * under black glass, a hairline accent underglow, light thrown onto the wall
+ * and floor — and the same displayFragment (flat glass, highlight soft-knee
+ * so nothing blooms out, static sheen, eased crossfade + slow zoom settle).
+ *
+ * Every project gets a designed 16:9 frame painted once to a CanvasTexture:
+ * title block + description + chips on the left, the app on a lit device
+ * stage (or an authored motif for poster projects) on the right.
  */
 export default function FeatureScreen() {
+  const reduced = useReducedMotion(); // reduced motion: the reel rests on slide 1
   const withImg = useMemo(() => PROJECTS.filter((p) => p.image), []);
   const urls = useMemo(() => withImg.map((p) => withBase(p.image as string)), [withImg]);
   const texs = useTexture(urls);
@@ -45,101 +51,78 @@ export default function FeatureScreen() {
     withImg.forEach((p, i) => {
       imgByUrl[p.image as string] = list[i].image as HTMLImageElement;
     });
-    const ser = familyVar("--ff-display", "Georgia, serif");
-    const mono = familyVar("--ff-mono", "ui-monospace, monospace");
-    const sans = familyVar("--ff-body", "system-ui, sans-serif");
     // The painter is idempotent (full-canvas fill first) so the fonts.ready
     // effect below can re-run it over the same canvases once webfonts land.
     const paint = (ctx: CanvasRenderingContext2D, p: (typeof PROJECTS)[number], i: number) => {
+      const ser = familyVar("--ff-display", "Georgia, serif");
+      const mono = familyVar("--ff-mono", "ui-monospace, monospace");
+      const sans = familyVar("--ff-body", "system-ui, sans-serif");
       const acc = p.accent;
 
-      // lifted base (~1.5 stops over the old near-black) + a diagonal accent
-      // wash so no region reads as dead black on the hero camera
-      ctx.fillStyle = "#1a1d28";
+      // neutral ground, the accent arriving only as light from the stage
+      const bg = ctx.createLinearGradient(0, 0, 0, 900);
+      bg.addColorStop(0, "#1a1e2a");
+      bg.addColorStop(1, "#11141c");
+      ctx.fillStyle = bg;
       ctx.fillRect(0, 0, 1600, 900);
-      const wash = ctx.createLinearGradient(0, 0, 1600, 900);
-      wash.addColorStop(0, hexA(acc, 0.26));
-      wash.addColorStop(0.45, "rgba(26,29,40,0)");
-      wash.addColorStop(1, hexA(acc, 0.12));
-      ctx.fillStyle = wash;
+      const stageX = 1170;
+      const stageY = 450;
+      const glow = ctx.createRadialGradient(stageX, stageY, 0, stageX, stageY, 560);
+      glow.addColorStop(0, hexA(acc, 0.34));
+      glow.addColorStop(0.55, hexA(acc, 0.1));
+      glow.addColorStop(1, hexA(acc, 0));
+      ctx.fillStyle = glow;
       ctx.fillRect(0, 0, 1600, 900);
+      // fine drafting dot grid
+      ctx.fillStyle = "rgba(244,241,234,0.05)";
+      for (let y = 30; y < 900; y += 30) for (let x = 30; x < 1600; x += 30) ctx.fillRect(x, y, 2, 2);
 
       // ── header strip ──
       ctx.textBaseline = "alphabetic";
       ctx.textAlign = "left";
       ctx.fillStyle = acc;
-      ctx.font = `500 28px ${mono}`;
-      ctx.fillText(`NOW SHOWING — ${p.index} / 0${PROJECTS.length}`, 110, 152);
+      ctx.font = `500 26px ${mono}`;
+      ctx.fillText(`NOW SHOWING — ${p.index} / 0${PROJECTS.length}`, 110, 118);
       ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(244,241,234,0.5)";
-      ctx.font = `500 24px ${mono}`;
-      ctx.fillText("KIRKHAM·01 — SHOWREEL", 1490, 152);
+      ctx.fillStyle = "rgba(244,241,234,0.45)";
+      ctx.font = `500 22px ${mono}`;
+      ctx.fillText("KIRKHAM·01 — SHOWREEL", 1490, 118);
       ctx.textAlign = "left";
-      ctx.strokeStyle = "rgba(244,241,234,0.16)";
+      ctx.strokeStyle = "rgba(244,241,234,0.14)";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(110, 178);
-      ctx.lineTo(1490, 178);
+      ctx.moveTo(110, 144);
+      ctx.lineTo(1490, 144);
       ctx.stroke();
 
-      // ── right: accent panel — screenshot slides mount the device on it,
-      //    poster slides get a giant index numeral instead of dead space ──
+      // ── right: the device stage ──
       const img = p.image ? imgByUrl[p.image] : null;
-      const px = 860, py = 110, pw = 630, ph = 670;
-      ctx.save();
-      roundRect(ctx, px, py, pw, ph, 26);
-      ctx.clip();
-      ctx.fillStyle = "#151826";
-      ctx.fillRect(px, py, pw, ph);
-      const pg = ctx.createLinearGradient(px, py, px + pw * 0.7, py + ph);
-      pg.addColorStop(0, hexA(acc, 0.92));
-      pg.addColorStop(0.6, hexA(acc, 0.48));
-      pg.addColorStop(1, "rgba(32,36,52,0.92)");
-      ctx.fillStyle = pg;
-      ctx.fillRect(px, py, pw, ph);
-      // giant decorative index numeral (subdued behind a screenshot)
-      ctx.fillStyle = INK;
-      ctx.globalAlpha = img ? 0.16 : 0.92;
-      ctx.textAlign = "right";
-      ctx.font = `700 470px ${ser}`;
-      ctx.fillText(p.index, px + pw - 30, py + ph - 44);
-      ctx.globalAlpha = 1;
-      ctx.textAlign = "left";
-      if (!img) {
-        ctx.fillStyle = "rgba(244,241,234,0.8)";
-        ctx.font = `500 26px ${mono}`;
-        ctx.fillText("PROJECT FILE", px + 36, py + 74);
-      }
-      // corner ticks — small drafting marks so the panel reads designed
-      ctx.strokeStyle = "rgba(244,241,234,0.55)";
-      ctx.lineWidth = 3;
-      const tick = (tx: number, ty: number, dx: number, dy: number) => {
-        ctx.beginPath();
-        ctx.moveTo(tx + 26 * dx, ty);
-        ctx.lineTo(tx, ty);
-        ctx.lineTo(tx, ty + 26 * dy);
-        ctx.stroke();
-      };
-      tick(px + 28, py + 28, 1, 1);
-      tick(px + pw - 28, py + 28, -1, 1);
-      tick(px + 28, py + ph - 28, 1, -1);
-      tick(px + pw - 28, py + ph - 28, -1, -1);
-      ctx.restore();
-      ctx.strokeStyle = hexA(acc, 0.8);
-      ctx.lineWidth = 3;
-      roundRect(ctx, px, py, pw, ph, 26);
-      ctx.stroke();
-
-      // device-framed screenshot, cover-cropped to fill the panel height
+      // stage floor line + soft reflection pool
+      const pool = ctx.createRadialGradient(stageX, 820, 0, stageX, 820, 300);
+      pool.addColorStop(0, hexA(acc, 0.22));
+      pool.addColorStop(1, hexA(acc, 0));
+      ctx.fillStyle = pool;
+      ctx.fillRect(stageX - 320, 740, 640, 160);
       if (img && img.width) {
-        const dw = 330, dh = 590;
-        const dx = px + (pw - dw) / 2;
-        const dy = py + (ph - dh) / 2;
-        ctx.fillStyle = "#0a0c13";
-        roundRect(ctx, dx - 14, dy - 14, dw + 28, dh + 28, 40);
-        ctx.fill();
+        const dw = 300, dh = 620;
+        const dx = stageX - dw / 2;
+        const dy = 180;
+        // shadow
         ctx.save();
-        roundRect(ctx, dx, dy, dw, dh, 28);
+        ctx.shadowColor = "rgba(0,0,0,0.55)";
+        ctx.shadowBlur = 50;
+        ctx.shadowOffsetY = 24;
+        ctx.fillStyle = "#0b0d13";
+        roundRect(ctx, dx - 12, dy - 12, dw + 24, dh + 24, 46);
+        ctx.fill();
+        ctx.restore();
+        // anodised edge
+        ctx.strokeStyle = "rgba(244,241,234,0.22)";
+        ctx.lineWidth = 2;
+        roundRect(ctx, dx - 12, dy - 12, dw + 24, dh + 24, 46);
+        ctx.stroke();
+        ctx.save();
+        roundRect(ctx, dx, dy, dw, dh, 36);
         ctx.clip();
         const tAR = dw / dh;
         const iAR = img.width / img.height;
@@ -149,99 +132,78 @@ export default function FeatureScreen() {
           sx = (img.width - sw) / 2;
         } else sh = img.width / tAR; // top-anchored crop keeps the app header visible
         ctx.drawImage(img, sx, 0, sw, sh, dx, dy, dw, dh);
-        // scrim: pulls white app UIs off the bloom threshold. Needs ≥0.18 —
-        // at 0.10, pure-white text still landed ~0.90 post-decode (×1.12 uOn
-        // ≈ 1.0 > 0.78 threshold) and dense small text bloomed into SOLID
-        // WHITE BLOBS over dark screenshots (QA: SelfAware slide).
-        ctx.fillStyle = "rgba(10,13,20,0.18)";
+        // glass sheen across the device
+        const sheen = ctx.createLinearGradient(dx, dy, dx + dw, dy + dh * 0.6);
+        sheen.addColorStop(0, "rgba(255,255,255,0.08)");
+        sheen.addColorStop(0.45, "rgba(255,255,255,0)");
+        ctx.fillStyle = sheen;
         ctx.fillRect(dx, dy, dw, dh);
         ctx.restore();
-        ctx.strokeStyle = hexA(acc, 0.9);
-        ctx.lineWidth = 4;
-        roundRect(ctx, dx - 14, dy - 14, dw + 28, dh + 28, 40);
-        ctx.stroke();
+        // dynamic island
+        ctx.fillStyle = "#07080c";
+        roundRect(ctx, stageX - 44, dy + 14, 88, 24, 12);
+        ctx.fill();
+      } else {
+        paintMotif(ctx, p.theme, stageX, stageY, acc);
       }
 
       // ── left column: kicker / title / description / chips ──
-      const lx = 110, lw = 690;
+      const lx = 110, lw = 700;
       ctx.fillStyle = acc;
-      ctx.font = `500 30px ${mono}`;
-      ctx.fillText(`${p.category.toUpperCase()} · ${p.year}`, lx, 250);
-      let ts = 124; // shrink-to-fit the serif title
+      ctx.font = `500 28px ${mono}`;
+      ctx.fillText(`${p.category.toUpperCase()} · ${p.year}`, lx, 236);
+      let ts = 128; // shrink-to-fit the serif title
       ctx.font = `700 ${ts}px ${ser}`;
       while (ctx.measureText(p.title).width > lw && ts > 72) {
         ts -= 6;
         ctx.font = `700 ${ts}px ${ser}`;
       }
       ctx.fillStyle = INK;
-      ctx.fillText(p.title, lx - 2, 372);
-      ctx.fillStyle = "rgba(244,241,234,0.85)";
+      ctx.fillText(p.title, lx - 4, 362);
+      ctx.fillStyle = "rgba(244,241,234,0.82)";
       ctx.font = `400 34px ${sans}`;
-      const descEnd = wrapText(ctx, p.description, lx, 444, lw, 46);
+      const descEnd = wrapText(ctx, p.description, lx, 434, lw, 48);
 
       // chips: traction metrics (accent) first, then the tech stack (neutral) —
-      // minus any tech already named inside a metric label (e.g. SelfGrow's
-      // "iOS SwiftUI · Offline" metric would otherwise repeat SWIFTUI).
+      // minus any tech already named inside a metric label
       const metricText = (p.metrics ?? []).map((m) => `${m.value} ${m.label}`.toLowerCase()).join(" ");
       const chips = [
         ...(p.metrics ?? []).map((m) => ({ t: `${m.value} ${m.label.toUpperCase()}`, hot: true })),
         ...p.tech.filter((t) => !metricText.includes(t.toLowerCase())).map((t) => ({ t: t.toUpperCase(), hot: false })),
       ];
-      ctx.font = `500 25px ${mono}`;
-      let cy = Math.max(descEnd + 18, 596);
+      ctx.font = `500 24px ${mono}`;
+      let cy = Math.max(descEnd + 14, 590);
       let cx = lx;
       for (const ch of chips) {
-        const cw = ctx.measureText(ch.t).width + 48;
+        const cw = ctx.measureText(ch.t).width + 44;
         if (cx + cw > lx + lw) {
           cx = lx;
-          cy += 62;
+          cy += 60;
         }
-        if (cy > 716) break; // never spill under the slide dots / letterbox
-        roundRect(ctx, cx, cy, cw, 50, 25);
+        if (cy > 700) break; // never spill under the slide index
+        roundRect(ctx, cx, cy, cw, 48, 24);
         if (ch.hot) {
-          ctx.fillStyle = hexA(acc, 0.22);
+          ctx.fillStyle = hexA(acc, 0.16);
           ctx.fill();
-          ctx.strokeStyle = hexA(acc, 0.9);
-        } else ctx.strokeStyle = "rgba(244,241,234,0.45)";
+          ctx.strokeStyle = hexA(acc, 0.75);
+        } else ctx.strokeStyle = "rgba(244,241,234,0.32)";
         ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.fillStyle = ch.hot ? INK : "rgba(244,241,234,0.85)";
-        ctx.fillText(ch.t, cx + 24, cy + 34);
-        cx += cw + 16;
+        ctx.fillStyle = ch.hot ? INK : "rgba(244,241,234,0.8)";
+        ctx.fillText(ch.t, cx + 22, cy + 33);
+        cx += cw + 14;
       }
 
-      // ── slide-progress dots (centred under the text column) ──
+      // ── slide index: short bars, current one in accent ──
       const n = PROJECTS.length;
-      const spacing = 44;
-      const dx0 = 470 - ((n - 1) * spacing) / 2;
       for (let k = 0; k < n; k++) {
-        ctx.beginPath();
-        ctx.arc(dx0 + k * spacing, 792, k === i ? 9 : 7, 0, Math.PI * 2);
-        if (k === i) {
-          ctx.fillStyle = acc;
-          ctx.fill();
-          ctx.strokeStyle = hexA(acc, 0.5);
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(dx0 + k * spacing, 792, 15, 0, Math.PI * 2);
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = "rgba(244,241,234,0.32)";
-          ctx.fill();
-        }
+        ctx.fillStyle = k === i ? acc : "rgba(244,241,234,0.25)";
+        roundRect(ctx, lx + k * 58, 790, 44, 5, 2.5);
+        ctx.fill();
       }
-
-      // ── baked CRT finish: scanlines → vignette, over everything. NO grain
-      //    stamp — per-pixel noise riding near-black slide regions renders as
-      //    dense white speckle through the CRT shader + post chain (same
-      //    failure as the removed shaders.ts grain term; QA "white spots"). ──
-      ctx.fillStyle = "rgba(8,10,16,0.13)";
-      for (let sy = 2; sy < 900; sy += 4) ctx.fillRect(0, sy, 1600, 1);
-      const vig = ctx.createRadialGradient(800, 450, 480, 800, 450, 1020);
-      vig.addColorStop(0, "rgba(0,0,0,0)");
-      vig.addColorStop(1, "rgba(0,0,0,0.30)");
-      ctx.fillStyle = vig;
-      ctx.fillRect(0, 0, 1600, 900);
+      ctx.fillStyle = "rgba(244,241,234,0.45)";
+      ctx.font = `500 22px ${mono}`;
+      ctx.fillText(`${p.index} / 0${n}`, lx + n * 58 + 14, 798);
     };
 
     const textures = PROJECTS.map((p, i) => {
@@ -250,11 +212,8 @@ export default function FeatureScreen() {
       c.height = 900;
       paint(c.getContext("2d")!, p, i);
       const tex = new THREE.CanvasTexture(c);
-      // IMPORTANT: leave the texture UNTAGGED (NoColorSpace). screenFragment's
-      // samp() does its own pow(2.2) decode; tagging this sRGB made three.js
-      // decode it a second time (displayed ≈ V^2.2) — midtones crushed to
-      // black and peak whites bloomed into unreadable white dither.
-      tex.colorSpace = THREE.NoColorSpace;
+      // displayFragment samples linear — let three decode the sRGB canvas
+      tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 16;
       return tex;
     });
@@ -262,9 +221,8 @@ export default function FeatureScreen() {
   }, [texs, withImg]);
   const frames = frameBundle.textures;
 
-  // Redraw every slide after document.fonts.ready (Walls.tsx pattern, finding
-  // 14): on a cold cache with fast JS / slow font path the showreel baked its
-  // serif/mono type in the fallback fonts for the whole session.
+  // Redraw every slide after document.fonts.ready (cold cache: the showreel
+  // would otherwise bake its type in the fallback fonts for the session).
   useEffect(() => {
     if (typeof document === "undefined" || !("fonts" in document)) return;
     let cancelled = false;
@@ -283,47 +241,53 @@ export default function FeatureScreen() {
       cancelled = true;
     };
   }, [frameBundle]);
+  useDeferredDispose(frameBundle.textures);
 
   const matRef = useRef<THREE.ShaderMaterial>(null);
-  const screenRef = useRef<THREE.Group>(null);
   const barRef = useRef<THREE.Group>(null);
-  const barMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const tRef = useRef(0);
-  const idx = useRef(0);
-  const next = useRef(1);
-  const nextAt = useRef(HOLD);
-  const moving = useRef(false);
-  const moveStart = useRef(0);
+  const st = useRef({ t: 0, idx: 0, next: 1, nextAt: HOLD, fading: false, fadeStart: 0, startA: 0, startB: 0 });
 
   const uniforms = useMemo<Record<string, THREE.IUniform>>(
     () => ({
-      uTexture: { value: frames[0] },
-      uTexNext: { value: frames[1 % frames.length] },
-      uTime: { value: 0 },
-      uOn: { value: 0.9 }, // shader lifts ×1.12 — 0.9 keeps peak whites ≤1 so bloom doesn't blow the panel at distance
-      uCrt: { value: 0.08 }, // baked scanlines carry the CRT feel — keep shader pass light
+      uTexA: { value: frames[0] },
+      uTexB: { value: frames[1 % frames.length] },
+      uCoverA: { value: new THREE.Vector2(1, 1) },
+      uCoverB: { value: new THREE.Vector2(1, 1) },
+      uCropA: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uCropB: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uZoomA: { value: 1 },
+      uZoomB: { value: 1 },
       uMix: { value: 0 },
-      uTrans: { value: 1 }, // filmstrip slide — the dissolve reads as corruption on camera
-      uTint: { value: new THREE.Color("#ffffff") },
+      uDim: { value: 0 },
+      uSize: { value: new THREE.Vector2(FW, FH) },
+      uRadius: { value: 0.06 },
+      uExposure: { value: 0.95 },
+      uExpA: { value: 1 },
+      uExpB: { value: 1 },
+      uKnee: { value: 0.34 },
+      uPeak: { value: 0.64 }, // INK text + the screenshots stay under the 0.78 bloom line
+      uGlass: { value: 0.03 },
+      uSurround: { value: new THREE.Color("#07080c") },
     }),
     [frames],
   );
 
   /* ── slide-accent light rig: one dominant colour per slide (project accent),
-     damp-lerped so transitions repaint the lobby without popping ── */
+     damp-lerped so a slide change is a slow drift, not a pop ── */
   const accentCols = useMemo(() => PROJECTS.map((p) => new THREE.Color(p.accent)), []);
   const tint = useMemo(() => accentCols[0].clone(), [accentCols]);
   const tintTarget = useMemo(() => accentCols[0].clone(), [accentCols]);
 
-  // one shared radial gradient sheet feeds the floor pool + wall wash + backwash
+  // one shared radial gradient sheet feeds the floor pool + wall wash + halo
   const radialTex = useMemo(() => {
     const c = document.createElement("canvas");
     c.width = c.height = 256;
     const ctx = c.getContext("2d")!;
     const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
     g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(0.4, "rgba(255,255,255,0.45)");
+    g.addColorStop(0.4, "rgba(255,255,255,0.42)");
+    g.addColorStop(0.75, "rgba(255,255,255,0.1)");
     g.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 256, 256);
@@ -342,138 +306,137 @@ export default function FeatureScreen() {
       toneMapped: false,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const poolMat = useMemo(() => mkGlow(0.5), [radialTex]); // floor glow pool
+  const poolMat = useMemo(() => mkGlow(0.34), [radialTex]); // floor glow pool
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const washMat = useMemo(() => mkGlow(0.34), [radialTex]); // flanking-wall wash
+  const washMat = useMemo(() => mkGlow(0.2), [radialTex]); // flanking-wall wash
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const backMat = useMemo(() => mkGlow(0.3), [radialTex]); // backwash halo behind the casing
-  // thin accent rim — shared, breathing (sin pulse on emissiveIntensity)
-  const rimMat = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: "#0d0f16",
-        roughness: 0.4,
-        metalness: 0.3,
-        emissive: accentCols[0].clone(),
-        emissiveIntensity: 1.1,
-        toneMapped: false,
-      }),
+  const haloMat = useMemo(() => mkGlow(0.16), [radialTex]); // halo on the niche wall
+  const trimMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ color: accentCols[0].clone().multiplyScalar(GLOW.trim), toneMapped: false }),
     [accentCols],
+  );
+  const barMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ color: accentCols[0].clone().multiplyScalar(GLOW.trim), toneMapped: false }),
+    [accentCols],
+  );
+  const bodyMat = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: NEUTRAL.hullLight, roughness: 0.32, metalness: 0.78 }),
+    [],
+  );
+  const glassMat = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: "#0a0c12", roughness: 0.12, metalness: 0.55 }),
+    [],
+  );
+  // deferred: StrictMode's mount-time cleanup must not dispose materials a
+  // pending compileAsync (Scene compile-before-reveal) is still waiting on
+  useDeferredDispose(
+    useMemo(
+      () => [poolMat, washMat, haloMat, trimMat, barMat, bodyMat, glassMat, radialTex],
+      [poolMat, washMat, haloMat, trimMat, barMat, bodyMat, glassMat, radialTex],
+    ),
   );
 
   useFrame((_, rawDt) => {
     const m = matRef.current;
     if (!m) return;
+    const s = st.current;
+    const u = m.uniforms;
     const dt = Math.min(rawDt, 1 / 30);
-    tRef.current += dt;
-    m.uniforms.uTime.value = tRef.current;
-    if (frames.length > 1) {
-      if (!moving.current && tRef.current >= nextAt.current) {
-        next.current = (idx.current + 1) % frames.length;
-        m.uniforms.uTexNext.value = frames[next.current];
-        tintTarget.copy(accentCols[next.current]); // light leads the wipe in
-        moving.current = true;
-        moveStart.current = tRef.current;
+    s.t += dt;
+    const life = HOLD + FADE * 2;
+    const zoomAt = (start: number) => 1 + ZOOM * (1 - ease(Math.min(Math.max((s.t - start) / life, 0), 1)));
+    let mix = 0;
+    let dim = 0;
+    if (frames.length > 1 && !reduced) {
+      if (!s.fading && s.t >= s.nextAt) {
+        s.next = (s.idx + 1) % frames.length;
+        u.uTexB.value = frames[s.next];
+        tintTarget.copy(accentCols[s.next]); // light drifts with the fade
+        s.fading = true;
+        s.fadeStart = s.t;
+        s.startB = s.t;
       }
-      if (moving.current) {
-        const k = (tRef.current - moveStart.current) / WIPE;
+      if (s.fading) {
+        const k = (s.t - s.fadeStart) / FADE;
         if (k >= 1) {
-          idx.current = next.current;
-          m.uniforms.uTexture.value = frames[idx.current];
-          m.uniforms.uMix.value = 0;
-          moving.current = false;
-          nextAt.current = tRef.current + HOLD;
-        } else m.uniforms.uMix.value = k * k * (3 - 2 * k); // eased wipe
+          s.idx = s.next;
+          s.startA = s.startB;
+          u.uTexA.value = frames[s.idx];
+          s.fading = false;
+          s.nextAt = s.t + HOLD;
+        } else {
+          // text-heavy slides: the frames only overlap through the middle of
+          // the fade, under a soft dim, so type never double-exposes
+          mix = ease(Math.min(Math.max((k - 0.3) / 0.4, 0), 1));
+          dim = 0.38 * Math.sin(Math.PI * k);
+        }
       }
     }
-    // slow Ken-Burns
-    if (screenRef.current) {
-      const s = 1 + Math.sin(tRef.current * 0.18) * 0.012;
-      screenRef.current.scale.set(s, s, 1);
-    }
-    // reel progress bar
+    u.uMix.value = mix;
+    u.uDim.value = dim;
+    u.uZoomA.value = zoomAt(s.startA);
+    u.uZoomB.value = zoomAt(s.startB);
+    // reel progress hairline (fills across the hold, rests full through the fade)
     if (barRef.current) {
-      const prog = moving.current ? 1 : Math.min((tRef.current - (nextAt.current - HOLD)) / HOLD, 1);
+      const prog = s.fading ? 1 : Math.min((s.t - (s.nextAt - HOLD)) / HOLD, 1);
       barRef.current.scale.x = Math.max(0.001, prog);
     }
     // chase the slide accent (no allocations — reuse the memoised Colors)
-    const dk = 1 - Math.exp(-dt * TINT_RATE);
-    tint.lerp(tintTarget, dk);
-    const breathe = Math.sin(tRef.current * 0.9); // slow — breathe, don't strobe
-    rimMat.emissive.copy(tint);
-    rimMat.emissiveIntensity = 1.1 + 0.25 * breathe; // lower peak → tighter bloom halo, rim stays a thin line
+    tint.lerp(tintTarget, 1 - Math.exp(-dt * TINT_RATE));
     poolMat.color.copy(tint);
     washMat.color.copy(tint);
-    backMat.color.copy(tint);
-    if (barMatRef.current) barMatRef.current.color.copy(tint);
-    if (lightRef.current) {
-      lightRef.current.color.copy(tint);
-      lightRef.current.intensity = 24 + 3 * breathe;
-    }
+    haloMat.color.copy(tint);
+    trimMat.color.copy(tint).multiplyScalar(GLOW.trim);
+    barMat.color.copy(tint).multiplyScalar(GLOW.trim);
+    if (lightRef.current) lightRef.current.color.copy(tint);
   });
+
+  const W = FW + BEZEL * 2;
+  const H = FH + BEZEL + CHIN;
+  const bodyY = -(CHIN - BEZEL) / 2;
 
   // entrance lobby: right wall, recessed into its own niche (the shell cuts the
   // wall outward by FEATURE_RECESS_DEPTH at FEATURE_X — Rig's feature look-target
   // aims at the same shared FEATURE_GLASS_Z so the flat panel stays framed head-on).
   return (
     <group position={[FEATURE_X, 1.72, FEATURE_GLASS_Z]} rotation-y={Math.PI}>
-      {/* low-alpha emissive backwash — the fixture reads lit even edge-on from
-          the hero camera (halo spills past the casing onto the niche wall) */}
-      <mesh position-z={-0.05} material={backMat}>
-        <planeGeometry args={[FW + 1.8, FH + 1.5]} />
+      {/* light the display throws back onto the niche wall */}
+      <mesh position={[0, bodyY, -0.2]} material={haloMat} renderOrder={-1}>
+        <planeGeometry args={[W * 1.7, H * 1.8]} />
       </mesh>
-      {/* gunmetal casing */}
-      <mesh position-z={-0.14}>
-        <boxGeometry args={[FW + 0.36, FH + 0.36, 0.22]} />
-        <meshStandardMaterial color="#2a2f3a" roughness={0.35} metalness={0.7} />
-      </mesh>
-      {/* thin accent rim — shared breathing emissive material (hairline: bloom
-          supplies the glow, so the bar itself stays skinny) */}
-      <mesh position={[0, FH / 2 + 0.15, -0.02]} material={rimMat}>
-        <boxGeometry args={[FW + 0.33, 0.028, 0.04]} />
-      </mesh>
-      <mesh position={[0, -FH / 2 - 0.15, -0.02]} material={rimMat}>
-        <boxGeometry args={[FW + 0.33, 0.028, 0.04]} />
-      </mesh>
-      <mesh position={[FW / 2 + 0.15, 0, -0.02]} material={rimMat}>
-        <boxGeometry args={[0.028, FH + 0.27, 0.04]} />
-      </mesh>
-      <mesh position={[-FW / 2 - 0.15, 0, -0.02]} material={rimMat}>
-        <boxGeometry args={[0.028, FH + 0.27, 0.04]} />
+      {/* anodised bezel */}
+      <RoundedBox args={[W, H, 0.16]} radius={0.04} smoothness={3} position={[0, bodyY, -0.082]} material={bodyMat} />
+      {/* black glass face — leaves a fine anodised rim */}
+      <mesh position={[0, bodyY, 0.0005]} material={glassMat}>
+        <planeGeometry args={[W - 0.05, H - 0.05]} />
       </mesh>
       {/* the reel */}
-      <group ref={screenRef}>
-        <mesh>
-          <planeGeometry args={[FW, FH]} />
-          <shaderMaterial
-            ref={matRef}
-            uniforms={uniforms}
-            vertexShader={screenVertex}
-            fragmentShader={screenFragment}
-            toneMapped={false}
-          />
+      <mesh position-z={0.003}>
+        <planeGeometry args={[FW, FH]} />
+        <shaderMaterial
+          ref={matRef}
+          uniforms={uniforms}
+          vertexShader={displayVertex}
+          fragmentShader={displayFragment}
+          toneMapped={false}
+        />
+      </mesh>
+      {/* reel progress hairline in the chin — scales from the left, slide-tinted */}
+      <mesh position={[0, -FH / 2 - CHIN / 2, 0.002]}>
+        <planeGeometry args={[FW * 0.4, 0.008]} />
+        <meshBasicMaterial color="#2a303e" toneMapped={false} />
+      </mesh>
+      <group ref={barRef} position={[-FW * 0.2, -FH / 2 - CHIN / 2, 0.003]}>
+        <mesh position={[FW * 0.2, 0, 0]} material={barMat}>
+          <planeGeometry args={[FW * 0.4, 0.008]} />
         </mesh>
       </group>
-      {/* letterbox bars — lifted off true black so they read as part of a lit
-          fixture, not holes in the wall */}
-      <mesh position={[0, FH / 2 - BAR_H / 2, 0.04]}>
-        <planeGeometry args={[FW, BAR_H]} />
-        <meshBasicMaterial color="#12151f" />
+      {/* hairline accent underglow */}
+      <mesh position={[0, bodyY - H / 2 - 0.004, -0.08]} material={trimMat}>
+        <boxGeometry args={[W * 0.5, 0.01, 0.1]} />
       </mesh>
-      <mesh position={[0, -FH / 2 + BAR_H / 2, 0.04]}>
-        <planeGeometry args={[FW, BAR_H]} />
-        <meshBasicMaterial color="#12151f" />
-      </mesh>
-      {/* reel progress bar — group scales from the left edge; tinted per slide */}
-      <group ref={barRef} position={[-FW / 2 + 0.05, -FH / 2 + 0.06, 0.05]}>
-        <mesh position={[(FW - 0.1) / 2, 0, 0]}>
-          <planeGeometry args={[FW - 0.1, 0.04]} />
-          <meshBasicMaterial ref={barMatRef} color={PROJECTS[0].accent} toneMapped={false} />
-        </mesh>
-      </group>
-      {/* slide-accent spill: radial glow pool on the lobby floor in front of the
-          screen + a soft vertical wash on the flanking corridor wall (both share
-          radialTex; tints chase the slide accent) */}
+      {/* slide-accent spill: glow pool on the lobby floor in front of the screen
+          + a soft wash on the flanking corridor wall (tints chase the slide) */}
       <mesh position={[0, -1.7, FEATURE_RECESS_DEPTH + 1.9]} rotation-x={-Math.PI / 2} material={poolMat}>
         <planeGeometry args={[7.0, 4.6]} />
       </mesh>
@@ -481,18 +444,86 @@ export default function FeatureScreen() {
         <planeGeometry args={[2.6, 3.6]} />
       </mesh>
       {/* the display THROWS light: damp-lerped slide-accent key in front of the
-          screen (tight falloff — this is one of the round's ≤2 new pointLights) */}
+          screen (existing light — steady, no breathing) */}
       <pointLight
         ref={lightRef}
         position={[0, 0.5, 2.8]}
         color={PROJECTS[0].accent}
-        intensity={24}
+        intensity={22}
         distance={9}
         decay={2}
       />
-      {/* cool fill so blacks around the fixture keep shape (was the old key —
-          demoted now the accent light paints the lobby) */}
+      {/* cool fill so blacks around the fixture keep shape */}
       <pointLight position={[0, 0.6, 3.2]} color="#bcd4ff" intensity={12} distance={12} decay={2} />
     </group>
   );
+}
+
+/** Authored stage motif for poster projects (no screenshots yet). */
+function paintMotif(ctx: CanvasRenderingContext2D, theme: string, cx: number, cy: number, acc: string) {
+  ctx.save();
+  if (theme === "map") {
+    ctx.lineWidth = 2.5;
+    for (let k = 1; k <= 9; k++) {
+      ctx.strokeStyle = hexA(acc, 0.12 + 0.04 * (9 - k));
+      ctx.beginPath();
+      for (let a = 0; a <= 72; a++) {
+        const t = (a / 72) * Math.PI * 2;
+        const r = k * 30 * (1 + 0.12 * Math.sin(t * 3 + k) + 0.06 * Math.cos(t * 5 - k * 0.7));
+        const x = cx + Math.cos(t) * r * 1.15;
+        const y = cy + Math.sin(t) * r * 0.9;
+        if (a === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(244,241,234,0.85)";
+    ctx.lineWidth = 4;
+    ctx.setLineDash([14, 12]);
+    ctx.beginPath();
+    ctx.moveTo(cx - 250, cy + 230);
+    ctx.bezierCurveTo(cx - 200, cy + 20, cx - 120, cy + 60, cx + 10, cy - 20);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(cx - 250, cy + 230, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = acc;
+    ctx.beginPath();
+    ctx.arc(cx + 10, cy - 62, 26, Math.PI, 0);
+    ctx.lineTo(cx + 10, cy - 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#1a1e2a";
+    ctx.beginPath();
+    ctx.arc(cx + 10, cy - 62, 9, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // faceted gem, drafted in line
+    const r = 170;
+    ctx.strokeStyle = hexA(acc, 0.95);
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r * 0.3);
+    ctx.lineTo(cx - r * 0.5, cy - r * 0.85);
+    ctx.lineTo(cx + r * 0.5, cy - r * 0.85);
+    ctx.lineTo(cx + r, cy - r * 0.3);
+    ctx.lineTo(cx, cy + r);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(244,241,234,0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r * 0.3);
+    ctx.lineTo(cx + r, cy - r * 0.3);
+    for (const fx of [-0.5, 0, 0.5]) {
+      ctx.moveTo(cx + r * fx, cy - r * 0.85);
+      ctx.lineTo(cx + r * fx * 0.6 - r * 0.2 * Math.sign(fx), cy - r * 0.3);
+      ctx.lineTo(cx, cy + r);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
 }

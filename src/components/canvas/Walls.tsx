@@ -4,6 +4,7 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { scrollRefs } from "@/lib/scrollStore";
+import { damp } from "@/lib/math";
 import {
   HALF_W,
   WALL_H,
@@ -21,6 +22,8 @@ import { InfoPanel, TimelinePanel, RoomLabel, BayPlaque } from "./bayPanels";
 import { BayMat } from "./bayFloors";
 import { BayArchitecture, BAY_PANEL } from "./bayLighting";
 import RoomProps from "./RoomProps";
+import { sealedOff } from "./BulkheadGates";
+import { accentLight, accentLightShare } from "./theme";
 
 /* ── the structural bay layer: alcove composition + threshold emitters + the
  *    shared bay light pool. The content renderers live in their own modules
@@ -181,6 +184,8 @@ type BayLightSpec = { pos: THREE.Vector3; color: THREE.Color; intensity: number 
  *  get. One extra pool slot, so
  *  the scene's light count stays constant. */
 const SPOT_INTENSITY = 16;
+/** Max pool-level change per displayed frame (see BayLightPool). */
+const POOL_MAX_STEP = 0.12;
 type BaySpotSpec = { pos: THREE.Vector3; target: THREE.Vector3; color: THREE.Color };
 
 const toWorld = (room: Room, [lx, ly, lz]: readonly [number, number, number]) => {
@@ -200,13 +205,16 @@ const BAY_SPOT_RECIPES: BaySpotSpec[] = ROOMS.map((room) => ({
  *  mirrors local x AND z. */
 const BAY_LIGHT_RECIPES: BayLightSpec[][] = ROOMS.map((room) => {
   const cfg = BAY_VARIANTS[room.variant];
-  const warm = new THREE.Color(cfg.lightBase).lerp(new THREE.Color(room.accent), cfg.lightLerp);
-  const accent = new THREE.Color(room.accent);
+  // the accent arrives as tinted LIGHT, not paint: the screen/panel fills are
+  // warm white pulled ~70% to the accent (less for warm hues — see
+  // theme.accentLightShare), so walls read as lit hull, not a coloured box
+  const warm = new THREE.Color(cfg.lightBase).lerp(new THREE.Color(room.accent), cfg.lightLerp * accentLightShare(room.accent));
+  const accent = accentLight(room.accent, 0.7);
   const m = room.side < 0 ? 1 : -1;
   const world = ([lx, ly, lz]: readonly [number, number, number]) =>
     new THREE.Vector3(room.x + m * lx, ly, room.side * HALF_W + m * lz);
   const tints = [warm, accent, accent, PROP_FILL_TINT];
-  const intensities = [cfg.lightIntensity, 4.5, 3, 5.5];
+  const intensities = [cfg.lightIntensity, 3.6, 2.6, 5.5];
   return POOL_SLOTS.map((slot, i) => ({
     pos: world(slot.pos),
     color: tints[i],
@@ -214,19 +222,38 @@ const BAY_LIGHT_RECIPES: BayLightSpec[][] = ROOMS.map((room) => {
   }));
 });
 
-function BayLightPool() {
+/** Mounted by Scene at the Canvas ROOT (outside every Suspense / shellReady
+ *  gate) — see the light-count note on Scene's <FixedLights/>. */
+export function BayLightPool() {
   const lights = useRef<(THREE.PointLight | null)[]>([]);
   const spot = useRef<THREE.SpotLight>(null);
   const roomIdx = useRef(-1);
-  useFrame(() => {
-    const f = focusAt(scrollRefs.progress);
-    const idx = f.room ? ROOMS.indexOf(f.room) : roomIdx.current;
-    if (idx < 0) return; // before the first focus band: pool parked dark
-    const recipe = BAY_LIGHT_RECIPES[idx];
-    if (idx !== roomIdx.current) {
-      // retarget while dark — ease is 0 whenever the focused room changes
-      roomIdx.current = idx;
-      recipe.forEach((spec, i) => {
+  const level = useRef(0);
+  useFrame((_, rawDt) => {
+    // CAMERA playhead, not raw scroll: on a flick / nav jump the raw progress
+    // races ahead, so the pool used to abandon the bay still on screen in a
+    // single frame (hard lighting pop) and light one the camera hadn't
+    // reached. cameraProgress is Rig's spring output — lockstep with the view.
+    const f = focusAt(scrollRefs.cameraProgress);
+    const want = f.room ? ROOMS.indexOf(f.room) : roomIdx.current;
+    if (want < 0) return; // before the first focus band: pool parked dark
+    // Retarget ONLY in the dark. focusAt's ease is 0 at every slot boundary,
+    // but a fast playhead can step across one mid-frame (A at 0.3 → B at
+    // 0.2); then the pool first fades out (≈0.12s), retargets, and ramps in.
+    const dt = Math.min(rawDt, 1 / 30);
+    const switching = want !== roomIdx.current;
+    const target = switching ? 0 : f.ease;
+    // Per-frame step cap: dt is clamped to 1/30, so across a hitch (frames
+    // 200–550 ms apart) the damp used to land a third of the whole fade in
+    // ONE displayed frame — the bay light visibly snapped on/off (critic
+    // D/ev49). Capping the step keeps any fade at ≥ ~8 displayed frames; at
+    // 60 fps the cap barely touches the normal curve.
+    const next = damp(level.current, target, switching ? 16 : 12, dt);
+    level.current += Math.max(-POOL_MAX_STEP, Math.min(POOL_MAX_STEP, next - level.current));
+    if (switching && (level.current < 0.015 || roomIdx.current < 0)) {
+      level.current = 0;
+      roomIdx.current = want;
+      BAY_LIGHT_RECIPES[want].forEach((spec, i) => {
         const l = lights.current[i];
         if (!l) return;
         l.position.copy(spec.pos);
@@ -234,7 +261,7 @@ function BayLightPool() {
       });
       const sp = spot.current;
       if (sp) {
-        const ss = BAY_SPOT_RECIPES[idx];
+        const ss = BAY_SPOT_RECIPES[want];
         sp.position.copy(ss.pos);
         sp.color.copy(ss.color);
         // the target isn't in the scene graph — update its matrix by hand
@@ -242,10 +269,12 @@ function BayLightPool() {
         sp.target.updateMatrixWorld();
       }
     }
-    if (spot.current) spot.current.intensity = SPOT_INTENSITY * f.ease;
+    const k = level.current;
+    const recipe = BAY_LIGHT_RECIPES[roomIdx.current];
+    if (spot.current) spot.current.intensity = SPOT_INTENSITY * k;
     recipe.forEach((spec, i) => {
       const l = lights.current[i];
-      if (l) l.intensity = spec.intensity * f.ease;
+      if (l) l.intensity = spec.intensity * k;
     });
   });
   return (
@@ -289,9 +318,11 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
     const g = contentRef.current;
     if (!g) return;
     const d = Math.abs(camera.position.x - room.x);
+    // also skip bays behind a still-sealed deck gate (fully occluded)
+    const sealed = sealedOff(camera.position.x, room.x);
     if (g.visible) {
-      if (d > BAY_HIDE_DIST) g.visible = false;
-    } else if (d < BAY_SHOW_DIST) {
+      if (d > BAY_HIDE_DIST || sealed) g.visible = false;
+    } else if (d < BAY_SHOW_DIST && !sealed) {
       g.visible = true;
     }
   });
@@ -396,7 +427,9 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
 export default function Walls({ animate = true, mobile = false }: { animate?: boolean; mobile?: boolean }) {
   return (
     <group>
-      <BayLightPool />
+      {/* <BayLightPool/> is hoisted to Scene's root: mounting its 5 lights
+          here (after shellReady) changed the scene light count mid-boot and
+          recompiled every lit material — a multi-second freeze. */}
       {ROOMS.map((room) => (
         <Alcove key={room.id} room={room} animate={animate} mobile={mobile} />
       ))}

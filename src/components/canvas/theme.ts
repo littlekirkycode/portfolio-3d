@@ -77,6 +77,27 @@ export function tintNeutral(neutral: string, accent: string, t = 0.1): THREE.Col
   return new THREE.Color(neutral).lerp(new THREE.Color(accent), t);
 }
 
+/** Warm white of the ship's practical light (bay key, panel diffusers). */
+export const LIGHT_WHITE = "#fff1e0";
+
+/** How much of a bay accent may reach LARGE surfaces as light (washes, fill
+ *  lights, wall glows). Warm accents (reds, oranges, ambers, gold) turn a grey
+ *  hull muddy salmon / mustard at full strength and fight the room's own
+ *  emitters, so they get ~60%; cool accents read as clean light and keep it
+ *  all. Emitters + trims are unaffected — this is only for spill. */
+export function accentLightShare(accent: THREE.ColorRepresentation): number {
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color(accent).getHSL(hsl);
+  return hsl.h < 0.14 || hsl.h > 0.93 ? 0.6 : 1;
+}
+
+/** Colour for accent LIGHT on big surfaces: warm white pulled toward the
+ *  accent by `t`, scaled by accentLightShare — the accent arrives as tinted
+ *  light, never as paint. */
+export function accentLight(accent: THREE.ColorRepresentation, t = 0.6): THREE.Color {
+  return new THREE.Color(LIGHT_WHITE).lerp(new THREE.Color(accent), t * accentLightShare(accent));
+}
+
 /** Motion rules (seconds). Nothing blinks or strobes; loops are slow and eased. */
 export const MOTION = {
   minLoop: 3, // no periodic visual change faster than this

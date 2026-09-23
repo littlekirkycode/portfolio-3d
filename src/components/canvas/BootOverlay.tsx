@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import HudFrame from "@/components/ui/HudFrame";
 
 /**
@@ -12,7 +12,12 @@ import HudFrame from "@/components/ui/HudFrame";
  * which keeps drei/three out of the eager bundle.
  *
  * Behaviour contract:
- *  - never appears if everything resolves within GRACE_MS (warm cache);
+ *  - SERVER-RENDERED VEIL: the overlay's dark backdrop is in the very first
+ *    HTML paint (no card yet), so the nav + dock never paint alone on a
+ *    black page and then vanish under a late-mounting card. Everything —
+ *    corridor, chrome, hero card — is revealed together by ONE fade;
+ *  - the card itself never appears if everything resolves within GRACE_MS
+ *    (warm cache) — the veil just lifts;
  *  - closes on SHELL readiness (R0): the first time the loading manager goes
  *    active→false the corridor shell has resolved, and the overlay commits to
  *    closing — the staged deferred-prop wave that re-activates the manager
@@ -30,11 +35,17 @@ type SceneModule = typeof import("./Scene");
 const GRACE_MS = 220;
 /** Hold the finished frame briefly so 100% doesn't flash past. */
 const LINGER_MS = 350;
-/** Fade-out length — keep in sync with the duration-[450ms] class below. */
-const FADE_MS = 450;
+/** Fade-out length — keep in sync with the duration-[600ms] class below. */
+const FADE_MS = 600;
 /** After the scene chunk evaluates, how long to wait for any load to start
  *  before concluding there is nothing left to fetch (fully warm session). */
 const SETTLE_MS = 500;
+
+/** Once the corridor has been revealed in this JS realm, the boot card must
+ *  never come back: a remount (Fast Refresh, an error-boundary reset, a
+ *  canvas remount) used to re-run the machine and drop the opaque card over
+ *  a live scene for a beat — a full-screen dark flash. */
+let bootedOnce = false;
 
 const BOOT_LINES = [
   { at: 35, label: "PRESSURIZING AIRLOCK" },
@@ -48,11 +59,17 @@ export default function BootOverlay({
   /** The hoisted Scene-chunk import from SceneCanvas (null during prerender). */
   scene: Promise<SceneModule> | null;
 }) {
-  const [phase, setPhase] = useState<"idle" | "shown" | "fading" | "done">("idle");
+  // "veil" = the SSR state (dark backdrop, no card). A remount after the
+  // reveal starts at "done", so it can never drop the veil over a live scene.
+  const [phase, setPhase] = useState<"veil" | "shown" | "fading" | "done">(() =>
+    bootedOnce ? "done" : "veil",
+  );
+  const [cardShown, setCardShown] = useState(false);
   const [pct, setPct] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!scene) return;
+    if (!scene || bootedOnce) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const timers: number[] = [];
     let unsub: (() => void) | null = null;
@@ -70,14 +87,23 @@ export default function BootOverlay({
     const close = () => {
       if (s.closing) return;
       s.closing = true;
+      bootedOnce = true;
       unsub?.();
       unsub = null;
-      if (!s.shown || reduced) {
-        // Never shown (cache hit) → just stay unmounted; reduced motion → no fade.
+      if (reduced) {
+        // Reduced motion → no fade, the veil simply lifts.
         setPhase("done");
         return;
       }
-      setPct(100);
+      // Card shown or not, the VEIL is up — always lift it with the fade so
+      // the corridor + chrome arrive together (never a hard cut). The SSR
+      // card may already be on screen through its CSS-delayed entrance
+      // (slow hydration): if so it stays and fades WITH the veil; if not it
+      // is dropped so it can never start rising inside the fade.
+      const el = cardRef.current;
+      if (el && parseFloat(getComputedStyle(el).opacity) > 0.02) s.shown = true;
+      setCardShown(s.shown);
+      if (s.shown) setPct(100);
       setPhase("fading");
       timers.push(window.setTimeout(() => setPhase("done"), FADE_MS));
     };
@@ -109,6 +135,7 @@ export default function BootOverlay({
           return;
         }
         s.shown = true;
+        setCardShown(true);
         setPhase("shown");
       }, GRACE_MS),
     );
@@ -145,55 +172,63 @@ export default function BootOverlay({
     };
   }, [scene]);
 
-  if (phase === "idle" || phase === "done") return null;
+  if (phase === "done") return null;
 
   return (
     <div
       role="status"
       aria-label="Docking — loading ship interior"
-      className={`pointer-events-none fixed inset-0 z-[58] flex items-center justify-center bg-bg transition-opacity duration-[450ms] ease-out ${
+      className={`pointer-events-none fixed inset-0 z-[58] flex items-center justify-center bg-bg transition-opacity duration-[600ms] ease-[cubic-bezier(0.65,0,0.35,1)] ${
         phase === "fading" ? "opacity-0" : "opacity-100"
-      }`}
+      } ${phase === "veil" ? "boot-veil--ssr" : ""}`}
     >
-      <div aria-hidden className="w-[min(21rem,84vw)]">
-        <HudFrame className="bg-bg-elev/60 px-6 py-5 backdrop-blur-md">
-          <p className="flex items-center gap-2.5 font-mono text-[10px] uppercase tracking-[0.22em] text-ink">
-            <span className="hud-blink inline-block h-1 w-1 rounded-full bg-accent" />
-            <span>KIRKHAM·01 — DOCKING CLEARANCE</span>
-          </p>
+      {/* The card is SERVER-RENDERED with the veil but enters on a CSS
+          delay (0.6 s): a cold load / slow hydration shows it before any JS
+          runs (never a blank black page), while a warm load lifts the veil
+          before it ever appears. After hydration, `cardShown` owns it. */}
+      {(phase === "veil" || cardShown) && (
+        <div
+          ref={cardRef}
+          aria-hidden
+          className="w-[min(22rem,86vw)]"
+          style={{ animation: `ui-rise 0.5s cubic-bezier(0.22,1,0.36,1) ${cardShown ? "0s" : "0.6s"} both` }}
+        >
+          <HudFrame solid className="px-6 pb-5 pt-5">
+            <p className="ui-kicker ui-kicker--dash text-[color:var(--ui-ink-2)]">KIRKHAM·01 — Docking clearance</p>
 
-          <div className="mt-4 flex items-center gap-3">
-            <div className="relative h-px flex-1 bg-line">
-              <div
-                className="absolute left-0 top-1/2 h-[3px] -translate-y-1/2 bg-accent transition-[width] duration-200 ease-out"
-                style={{ width: `${pct}%` }}
-              />
+            <div className="mt-5 flex items-center gap-4">
+              <div className="relative h-[2px] flex-1 overflow-hidden rounded-full bg-[color:var(--ui-line)]">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 ease-out"
+                  style={{
+                    width: `${pct}%`,
+                    background: "linear-gradient(90deg, color-mix(in srgb, var(--hud-accent) 50%, transparent), var(--hud-accent))",
+                  }}
+                />
+              </div>
+              {/* no zero-padding ("000%" read as broken) — fixed width instead */}
+              <span className="ui-label min-w-[4ch] text-right tabular-nums text-[color:var(--ui-ink)]">{pct}%</span>
             </div>
-            <span className="font-mono text-[10px] tabular-nums tracking-[0.22em] text-ink">
-              {String(pct).padStart(3, "0")}%
-            </span>
-          </div>
 
-          <ul className="mt-4 space-y-1.5 font-mono text-[10px] uppercase tracking-[0.22em]">
-            {BOOT_LINES.map(({ at, label }) => {
-              const lineDone = pct >= at;
-              return (
-                <li
-                  key={label}
-                  className={`flex items-center justify-between gap-6 ${
-                    lineDone ? "text-ink-dim" : "text-ink-dim/45"
-                  }`}
-                >
-                  <span>{label}</span>
-                  <span className={lineDone ? "text-accent" : "hud-blink"}>
-                    {lineDone ? "OK" : "· ·"}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </HudFrame>
-      </div>
+            <ul className="mt-5 space-y-2.5">
+              {BOOT_LINES.map(({ at, label }) => {
+                const lineDone = pct >= at;
+                return (
+                  <li
+                    key={label}
+                    className={`ui-kicker flex w-full justify-between gap-6 transition-colors duration-500 ${
+                      lineDone ? "text-[color:var(--ui-ink-2)]" : "text-ink-3/60"
+                    }`}
+                  >
+                    <span>{label}</span>
+                    <span style={lineDone ? { color: "var(--hud-accent)" } : undefined}>{lineDone ? "OK" : "—"}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </HudFrame>
+        </div>
+      )}
     </div>
   );
 }

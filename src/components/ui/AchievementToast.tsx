@@ -44,15 +44,16 @@ export default function AchievementToast() {
   return (
     <div
       role="status"
-      className="pointer-events-none fixed left-1/2 top-20 z-50 -translate-x-1/2"
+      className="pointer-events-none fixed left-1/2 top-24 z-50 -translate-x-1/2"
     >
       {text && (
         <div
           data-testid="achievement-toast"
-          className="flex items-center gap-2.5 whitespace-nowrap border border-accent/60 bg-bg-elev/85 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.22em] text-ink backdrop-blur-md"
+          className="ui-glass ui-glass--rim flex items-center gap-3 whitespace-nowrap !rounded-full px-5 py-3"
+          style={{ animation: "ui-rise 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
         >
-          <span aria-hidden className="hud-blink h-1.5 w-1.5 rounded-full bg-accent" />
-          {text}
+          <span aria-hidden className="ui-dot" />
+          <span className="ui-label text-[color:var(--ui-ink)]">{text}</span>
         </div>
       )}
     </div>

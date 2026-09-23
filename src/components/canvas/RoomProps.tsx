@@ -36,7 +36,7 @@ import type { BayProps } from "./rooms/shared";
  */
 
 
-/* The per-theme FLOOR_ART deck markings + FloorStory/GymDeck renderers live in
+/* The per-theme FLOOR_ART deck markings + FloorStory renderer live in
  * ./bayFloors with the rest of the painted-floor system (finding 34). */
 
 export default function RoomProps({

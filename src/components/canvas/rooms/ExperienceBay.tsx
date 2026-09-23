@@ -1,30 +1,28 @@
 "use client";
 
-import { Bob, Model, SpinY } from "../ModelLoader";
-import { d2r, type BayProps } from "./shared";
-import ExperienceRoom from "./ExperienceRoom";
+import { type BayProps } from "./shared";
+import ExperienceRoom, { LAMP_AT } from "./ExperienceRoom";
+import NowLamp from "./experience/NowLamp";
+import Vitrine from "./experience/Vitrine";
 
-/** Experience bay — the complete room composition (installation + props).
- *  the career as a rising staircase, the founder's ship circling above it */
+/** Experience bay — the complete room composition.
+ *  Hero: "The Ascent", a cantilevered walnut stair climbing the left wall —
+ *  one tread per role (EXPERIENCE, start order) with its year and
+ *  organisation inlaid in the nose — to a landing where the NOW lamp stands,
+ *  the room's single brightest point.
+ *  Secondary: the pass case — a slope-top vitrine on the centre floor under
+ *  the poster holding the six access passes, one per role.
+ *  The right lane stays clear beside the timeline panel. */
 export default function ExperienceBay({ accent, animate, mobile }: BayProps) {
   return (
-      <group>
-        {/* portrait stacks the timeline panel over the front floor, where
-            the staircase lives — it would cover the list it illustrates */}
-        {!mobile && <ExperienceRoom accent={accent} animate={animate} />}
-        <group position={[-2.7, 0, 1.0]}>
-          <Bob amp={0.07} speed={1.1} animate={animate}>
-            <group position={[0, 2.35, 0]}>
-              <SpinY speed={0.35} animate={animate}>
-                <Model name="spaceship" maxDim={0.62} onFloor={false} rotation={[0, 0, d2r(-6)]} />
-                <mesh position={[0, 0.02, -0.27]}>
-                  <sphereGeometry args={[0.035, 10, 10]} />
-                  <meshBasicMaterial color={accent} toneMapped={false} />
-                </mesh>
-              </SpinY>
-            </group>
-          </Bob>
-        </group>
-      </group>
+    <group name="experience-root">
+      {/* portrait steps the camera in (room-local z 4.35, vfov 86°): the left
+          column is off-frame and the stacked panel covers the centre floor
+          down to the HUD, so the case would only show as a cropped sliver at
+          the frame edge (measured at p=0.67, 390×844) — desktop-only */}
+      {!mobile && <ExperienceRoom accent={accent} animate={animate} />}
+      {!mobile && <NowLamp accent={accent} position={LAMP_AT} />}
+      {!mobile && <Vitrine accent={accent} position={[-0.95, 0, 0.72]} />}
+    </group>
   );
 }

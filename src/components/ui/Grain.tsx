@@ -5,9 +5,9 @@ import { useIsMobile } from "@/lib/useIsMobile";
 
 /**
  * Full-screen animated film-grain overlay. The grain texture is an inline
- * SVG feTurbulence data URI tiled as a background; flicker is achieved by
- * nudging the background-position in stepped keyframes (cheap, GPU-friendly)
- * plus a subtle opacity pulse. Static when the OS asks to reduce motion.
+ * SVG feTurbulence data URI tiled as a background; it drifts very slowly
+ * (18 s eased transform — no stepped jitter, no opacity flicker). Static
+ * when the OS asks to reduce motion.
  *
  * pointer-events-none + a fixed full-screen layer means it never blocks input.
  */
@@ -23,23 +23,13 @@ const GRAIN_SVG = `data:image/svg+xml,${encodeURIComponent(
   </svg>`,
 )}`;
 
+// Slow drift only (was a 0.6 s stepped background jitter — a 10 fps noise
+// strobe). Grain now breathes by position over 18 s, eased: still alive, never
+// flickering.
 const KEYFRAMES = `
-@keyframes grainShift {
-  0%   { background-position: 0 0; }
-  10%  { background-position: -5% -10%; }
-  20%  { background-position: -15% 5%; }
-  30%  { background-position: 7% -25%; }
-  40%  { background-position: -5% 25%; }
-  50%  { background-position: -15% 10%; }
-  60%  { background-position: 15% 0; }
-  70%  { background-position: 0 15%; }
-  80%  { background-position: 3% 35%; }
-  90%  { background-position: -10% 10%; }
-  100% { background-position: 0 0; }
-}
-@keyframes grainFlicker {
-  0%, 100% { opacity: 0.06; }
-  50%      { opacity: 0.08; }
+@keyframes grainDrift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(-2%, 1.5%, 0); }
 }`;
 
 export default function Grain() {
@@ -65,10 +55,8 @@ export default function Grain() {
           backgroundRepeat: "repeat",
           backgroundSize: "160px 160px",
           opacity: 0.07,
-          willChange: reduced ? undefined : "background-position, opacity",
-          animation: reduced
-            ? undefined
-            : "grainShift 0.6s steps(6) infinite, grainFlicker 3.2s ease-in-out infinite",
+          willChange: reduced ? undefined : "transform",
+          animation: reduced ? undefined : "grainDrift 18s cubic-bezier(0.65,0,0.35,1) infinite",
         }}
       />
     </>
