@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
-import { cameraXAt, GALLERY_X, GATES, HALF_W, ROOMS, STOP_PROGRESSES, WALL_H } from "./hallConfig";
+import { GALLERY_X, GATES, GATE_BEATS, gateOpenAt, HALF_W, ROOMS, WALL_H } from "./hallConfig";
+import { scrollRefs } from "@/lib/scrollStore";
 import { familyVar, hexA } from "./canvas2d";
 import { GLOW } from "./theme";
 import {
@@ -25,7 +26,6 @@ import {
   placeDogs,
   rbox,
   slitTexture,
-  smoother,
   smoothstep,
   tint,
   useDoorEnv,
@@ -44,20 +44,12 @@ import {
  * number stencilled across the seam. The rim line and the hub lamp take the
  * NEXT deck's accent — the far-hall wayfinding read.
  *
- * Opening is a pure function of the camera's distance to the gate (the camera
- * itself is scroll-mapped), so it scrubs both ways, needs no timers and is
- * identical with reduced motion. It plays where the gate is FRAMED HEAD-ON —
- * the approach transit, when the gaze crosses the corridor axis:
- *   gate 1 (deck 02): the SelfAware → SelfGrow sweep faces it at p ≈ 0.335–
- *                     0.345, d ≈ 13.6 → 8.4;
- *   gate 2 (deck 03): the gallery → Capabilities settle faces it at p ≈ 0.571–
- *                     0.589, d ≈ 11.5 → 6.
- * Each gate's head-on distance dv is DERIVED from the dwell layout (the
- * camera x midway between the two dwell stops before it: 11 and 8.5 today),
- * dogs retract over dv+3 → dv+1.8 and the leaves part over dv+2 → dv−2.6,
- * so both gates are seen shut, parting and open in frame. (Closer than
- * that the camera is turned into the neighbouring bay — an opening there is
- * never seen.)
+ * Opening is a pure function of the camera PLAYHEAD through the gate's own
+ * beat (hallConfig GATE_BEATS / gateOpenAt): the head settles to straight
+ * down the hall, the camera parks GATE_VIEW in front of the gate, the seals
+ * release and the leaves part as the visitor scrolls, then the camera glides
+ * through. It scrubs both ways, needs no timers and is identical with
+ * reduced motion.
  * Leaves hide only once the lens has passed the gate plane (they are behind
  * it then). No lights. ── */
 
@@ -96,37 +88,18 @@ const HUB_R = 0.34;
 const DOGS = [0.56, 0.84, 1.1] as const;
 const F = -LT / 2;
 
-// camera-distance choreography, relative to each gate's head-on distance dv
-// (world units from the gate plane) — see the header
-const UNLOCK_FAR = 3.0;
-const UNLOCK_NEAR = 1.8;
-const PART_FAR = 2.0;
-const PART_NEAR = -2.6;
-
-/** Camera distance at which gate x is framed head-on on its approach: the
- *  camera x midway (in progress) between the last two dwell stops before
- *  it — where the gaze crosses the corridor axis (opposite-wall neighbours)
- *  or settles straight ahead (same-wall neighbours). */
-function headOnDistance(x: number): number {
-  const before = STOP_PROGRESSES.filter((p) => cameraXAt(p) < x - 0.5);
-  if (!before.length) return 10;
-  const a = before[Math.max(0, before.length - 2)];
-  const b = before[before.length - 1];
-  return x - cameraXAt((a + b) / 2);
-}
-
-/** Per-gate x + the camera distance beyond which its leaves are still fully
- *  sealed (the parting choreography hasn't begun), with half a metre spare. */
-const SEALS = GATES.map((g) => ({ x: g.x, sealedBeyond: headOnDistance(g.x) + PART_FAR + 0.5 }));
-
 /** True while a SHUT gate stands between the camera and world x `targetX`
- *  (camera on the approach side). The collar fills the corridor wall to wall
+ *  (camera on the approach side, before the gate's beat opens it — see
+ *  hallConfig GATE_BEATS). The collar fills the corridor wall to wall
  *  and floor to ceiling, so anything past it is invisible — Walls uses this
  *  to skip submitting the draws of bays behind a sealed deck door. Pure
  *  function of camera x, like the gate itself, so it scrubs both ways. */
-export function sealedOff(camX: number, targetX: number): boolean {
-  for (const s of SEALS) {
-    if (camX < s.x && targetX > s.x && s.x - camX > s.sealedBeyond) return true;
+export function sealedOff(camX: number, targetX: number, p: number): boolean {
+  for (let k = 0; k < GATE_BEATS.length; k++) {
+    const b = GATE_BEATS[k];
+    // leaves stay fully shut until the gate's beat is under way; small
+    // margin so the bay beyond is already drawn when they start to part
+    if (camX < b.x && targetX > b.x && p < b.lo - 0.004) return true;
   }
   return false;
 }
@@ -142,7 +115,7 @@ const DECKS = GATES.map((g, i) => {
   const sub = rooms.length
     ? `EXHIBITS ${rooms[0].index}–${rooms[rooms.length - 1].index}${gallery ? " · OBSERVATION" : ""}`
     : "";
-  return { n, label: `DECK ${n}`, sub, accent: rooms[0]?.accent ?? g.accent, dv: headOnDistance(g.x) };
+  return { n, label: `DECK ${n}`, sub, accent: rooms[0]?.accent ?? g.accent };
 });
 
 /** One 1024×1024 canvas: rows 0–1 lintel plates, rows 2–3 leaf stencils. */
@@ -311,7 +284,8 @@ type Shared = {
   jamb: THREE.MeshStandardMaterial;
 };
 
-function Gate({ x, deck, plate, stencilL, stencilR, sh }: {
+function Gate({ k, x, deck, plate, stencilL, stencilR, sh }: {
+  k: number;
   x: number;
   deck: (typeof DECKS)[number];
   plate: THREE.Texture;
@@ -369,9 +343,11 @@ function Gate({ x, deck, plate, stencilL, stencilR, sh }: {
     const cx = state.camera.position.x;
     const d = Math.abs(cx - x);
     if (d > 40 && lastU.current >= 0) return; // far down the hall: leave it shut
-    const r = d - deck.dv;
-    const u = smoothstep(UNLOCK_FAR, UNLOCK_NEAR, r);
-    const e = smoother((PART_FAR - r) / (PART_FAR - PART_NEAR));
+    // Door state is a pure function of the CAMERA playhead through this
+    // gate's beat (hallConfig GATE_BEATS: camera parked facing the doors,
+    // seals release, leaves part, then the glide through) — so it scrubs both
+    // ways and the visitor gets a full beat of scroll to watch it open.
+    const { unlock: u, part: e } = gateOpenAt(k, scrollRefs.cameraProgress);
     const show = cx < x + 0.9;
     const zi = I_Z + I_TRAVEL * e;
     const zo = O_Z + O_TRAVEL * e;
@@ -552,6 +528,7 @@ export default function BulkheadGates() {
       {GATES.map((g, i) => (
         <Gate
           key={`gate${i}`}
+          k={i}
           x={g.x}
           deck={DECKS[i]}
           plate={art[i].plate}

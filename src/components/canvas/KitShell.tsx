@@ -62,6 +62,12 @@ function buildShell(): { walls: Inst[]; wallsUpper: Inst[]; floors: Inst[] } {
 
   // corridor floor + ceiling (the atrium run is open — no ceiling tiles)
   for (const x of cols) for (const z of zc) floorCeil(x, z, inAtrium(x));
+  // the atrium's own (raised) ceiling, capping the clerestory row at
+  // WALL_H + TILE — without it the lobby read as a hall with no roof
+  for (const x of cols) {
+    if (!inAtrium(x)) continue;
+    for (const z of zc) floors.push({ p: [x, CEIL_Y + TILE, z], r: [Math.PI, 0, 0] });
+  }
 
   // corridor side walls — skip each room's opening on its own side, the gallery
   // glazing cut on the +z wall, and the showreel recess columns at FEATURE_X

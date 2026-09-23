@@ -244,17 +244,74 @@ const FEATURE_TURN_IN = 0.06;
  *  the +z → −z pan is one continuous sweep (see above). */
 const FEATURE_JUNCTION = (FEATURE_HOLD_HI + ROOM_LO + GAZE_FULL_LO * SLOT) / 2;
 
+/** The camera holds at the airlock over [0, AIRLOCK_HOLD] so the entry doors
+ *  have real scroll to open in (Airlock's TIMING finishes inside it) before
+ *  the glide into the lobby starts. */
+export const AIRLOCK_HOLD = 0.042;
+
+/* ── deck-gate beats ───────────────────────────────────────────────────────
+ * Each bulkhead gate gets its own forward-facing beat: the head settles off
+ * the room before the gate to straight down the hall (no cross-corridor
+ * sweep), the camera parks GATE_VIEW in front of the gate plane, the doors
+ * open as a pure function of scroll through the beat (gateOpenAt), and only
+ * then does the camera glide through into the next room. The two slots either
+ * side of a gate are retimed inside their own [s, s+SLOT] bands (slot a exits
+ * earlier, slot b turns in later); dwell CENTRES are unchanged. */
+const slotX = (i: number): number => (i === GALLERY_SLOT ? GALLERY_X : ROOMS[i < GALLERY_SLOT ? i : i - 1].x);
+/** For each gate, the last dwell slot in front of it. */
+const GATE_A: number[] = GATES.map((g) => {
+  let a = 0;
+  for (let i = 0; i < N_SLOTS; i++) if (slotX(i) < g.x) a = i;
+  return a;
+});
+const isGateA = (i: number) => GATE_A.includes(i);
+const isGateB = (i: number) => GATE_A.includes(i - 1);
+// slot a (before the gate): leaves its park + releases the gaze earlier
+const GA_HOLD_HI = 0.6;
+const GA_GAZE_HI = 0.62;
+const GA_OUT = 0.8;
+// slot b (after the gate): turns in later, from straight ahead
+const GB_IN = 0.15;
+const GB_GAZE_LO = 0.38;
+const GB_HOLD_LO = 0.4;
+/** Where the camera parks for the beat: this far in front of the gate plane. */
+const GATE_VIEW = 4.2;
+/** Progress window of each gate's beat (camera parked, facing the doors). */
+export const GATE_BEATS: { x: number; lo: number; hi: number }[] = GATES.map((g, k) => {
+  const s = slotStart(GATE_A[k]);
+  return { x: g.x, lo: s + SLOT * GA_OUT, hi: s + SLOT * (1 + GB_IN) };
+});
+
+/** Door state for gate k at camera progress p: seals release over the first
+ *  ~22% of the beat, the leaves part over the next ~70% (finishing a touch
+ *  before the camera moves, so the open doorway is seen), both eased and both
+ *  scrubbing backwards when the visitor scrolls back. */
+export function gateOpenAt(k: number, p: number): { unlock: number; part: number } {
+  const b = GATE_BEATS[k];
+  const len = b.hi - b.lo;
+  const unlock = clamp01((p - b.lo) / (0.22 * len));
+  return {
+    unlock: unlock * unlock * (3 - 2 * unlock),
+    part: smoother(clamp01((p - b.lo - 0.18 * len) / (0.7 * len))),
+  };
+}
+
 // keyframes of (progress → cameraX); a flat "dwell" band sits at each slot.
 type KF = { p: number; x: number };
-const KEYS: KF[] = [{ p: 0, x: START_X }];
+const KEYS: KF[] = [{ p: 0, x: START_X }, { p: AIRLOCK_HOLD, x: START_X }];
 // Showreel dwell: glide in, hold facing the feature screen, then move on.
 KEYS.push({ p: FEATURE_HOLD_LO, x: FEATURE_CAM_X });
 KEYS.push({ p: FEATURE_HOLD_HI, x: FEATURE_CAM_X });
 for (let i = 0; i < N_SLOTS; i++) {
   const s = slotStart(i);
-  const x = i === GALLERY_SLOT ? GALLERY_X : ROOMS[i < GALLERY_SLOT ? i : i - 1].x;
-  KEYS.push({ p: s + SLOT * HOLD_LO, x }); // arrive (park on the slot)
-  KEYS.push({ p: s + SLOT * HOLD_HI, x }); // leave — corridor travel to the next slot
+  const x = slotX(i);
+  KEYS.push({ p: s + SLOT * (isGateB(i) ? GB_HOLD_LO : HOLD_LO), x }); // arrive (park on the slot)
+  KEYS.push({ p: s + SLOT * (isGateA(i) ? GA_HOLD_HI : HOLD_HI), x }); // leave — corridor travel to the next slot
+  if (isGateA(i)) {
+    const b = GATE_BEATS[GATE_A.indexOf(i)];
+    KEYS.push({ p: b.lo, x: b.x - GATE_VIEW }); // gate beat: parked facing the doors
+    KEYS.push({ p: b.hi, x: b.x - GATE_VIEW });
+  }
 }
 KEYS.push({ p: 1, x: END_X });
 
@@ -403,12 +460,19 @@ function ramp(
  *  junction), so slot windows tile without overlapping. */
 function slotEase(p: number, slot: number): number {
   const s = slotStart(slot);
-  const inLo = slot === 0 ? FEATURE_JUNCTION : s;
+  const a = isGateA(slot);
+  const b = isGateB(slot);
+  const inLo = slot === 0 ? FEATURE_JUNCTION : b ? s + SLOT * GB_IN : s;
+  const outHi = a ? s + SLOT * GA_OUT : s + SLOT;
   const side = slotSide(slot);
   const prevSide = slot === 0 ? FEATURE_SIDE : slotSide(slot - 1);
-  const sweepLo = prevSide !== side;
-  const sweepHi = slot < N_SLOTS - 1 && slotSide(slot + 1) !== side;
-  return ramp(p, inLo, s + SLOT * GAZE_FULL_LO, s + SLOT * GAZE_FULL_HI, s + SLOT, sweepLo, sweepHi);
+  // a gate between two slots breaks the cross-corridor sweep: both settle
+  // to straight ahead so the head faces the doors for the whole beat
+  const sweepLo = !b && prevSide !== side;
+  const sweepHi = !a && slot < N_SLOTS - 1 && slotSide(slot + 1) !== side;
+  const fullLo = s + SLOT * (b ? GB_GAZE_LO : GAZE_FULL_LO);
+  const fullHi = s + SLOT * (a ? GA_GAZE_HI : GAZE_FULL_HI);
+  return ramp(p, inLo, fullLo, fullHi, outHi, sweepLo, sweepHi);
 }
 
 /** Which room the camera is focusing, and how strongly (0..1), for the glance.
@@ -446,14 +510,20 @@ export function featureFocusAt(p: number): number {
 
 /* ── parks + magnetic dwell settle ────────────────────────────────────────── */
 
-/** Every park, in order: airlock (a point), showreel, the ten slot holds. */
+/** Every park, in order: airlock hold, showreel, the ten slot holds with the
+ *  two deck-gate beats between their neighbours. */
 const PARKS: [number, number][] = [
-  [0, 0],
+  [0, AIRLOCK_HOLD],
   [FEATURE_HOLD_LO, FEATURE_HOLD_HI],
-  ...Array.from({ length: N_SLOTS }, (_, i): [number, number] => [
-    slotStart(i) + SLOT * HOLD_LO,
-    slotStart(i) + SLOT * HOLD_HI,
-  ]),
+  ...Array.from({ length: N_SLOTS }, (_, i): [number, number][] => {
+    const hold: [number, number] = [
+      slotStart(i) + SLOT * (isGateB(i) ? GB_HOLD_LO : HOLD_LO),
+      slotStart(i) + SLOT * (isGateA(i) ? GA_HOLD_HI : HOLD_HI),
+    ];
+    if (!isGateA(i)) return [hold];
+    const b = GATE_BEATS[GATE_A.indexOf(i)];
+    return [hold, [b.lo, b.hi]];
+  }).flat(),
 ];
 
 /** Index into the park list of the park containing p (camera X is flat

@@ -23,6 +23,7 @@ import {
 import { starVertex, starFragment, makeStarUniforms, updateStarUniforms } from "./Windows";
 import {
   CeilingFixtures,
+  AtriumLights,
   CoveLights,
   LightShafts,
   FloorReflection,
@@ -626,6 +627,7 @@ export default function Corridor({
   return (
     <group>
       <CeilingFixtures />
+      <AtriumLights />
       <LightShafts />
       <CoveLights />
       {!mobile && quality === "high" && <FloorReflection />}

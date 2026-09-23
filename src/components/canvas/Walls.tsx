@@ -319,7 +319,7 @@ function Alcove({ room, animate, mobile = false }: { room: Room; animate: boolea
     if (!g) return;
     const d = Math.abs(camera.position.x - room.x);
     // also skip bays behind a still-sealed deck gate (fully occluded)
-    const sealed = sealedOff(camera.position.x, room.x);
+    const sealed = sealedOff(camera.position.x, room.x, scrollRefs.cameraProgress);
     if (g.visible) {
       if (d > BAY_HIDE_DIST || sealed) g.visible = false;
     } else if (d < BAY_SHOW_DIST && !sealed) {

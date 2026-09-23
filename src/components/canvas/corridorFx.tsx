@@ -55,11 +55,12 @@ const FIX_Y = WALL_H - 0.1; // diffuser plane height
 const nearGate = (x: number, m: number) => GATES.some((g) => Math.abs(x - g.x) < m);
 const nearAtrium = (x: number, m: number) => Math.abs(x - ATRIUM_C) < TILE * 2.5 + m;
 
-/** Troffer centres: halfway between ribs, from the lobby to the bridge
- *  approach, skipping the open atrium and the bulkhead-gate lintels. */
+/** Troffer centres: halfway between ribs in EVERY OTHER rib bay (one per
+ *  8 m — one per 4 m read as a runway of lights), from the lobby to the
+ *  bridge approach, skipping the atrium and the bulkhead-gate lintels. */
 export const FIXTURE_XS: number[] = (() => {
   const out: number[] = [];
-  for (let x = RIB_X0 + RIB_PITCH / 2; x < END_X - 3; x += RIB_PITCH) {
+  for (let x = RIB_X0 + RIB_PITCH / 2; x < END_X - 3; x += RIB_PITCH * 2) {
     if (nearAtrium(x, 1.4) || nearGate(x, 2.0)) continue;
     out.push(x);
   }
@@ -391,6 +392,44 @@ export function CeilingFixtures() {
     </group>
   );
 }
+/** The lobby atrium's raised ceiling (KitShell caps it at WALL_H + TILE):
+ *  two troffers + edge beams up there, so the entrance reads as a lit,
+ *  roofed double-height hall rather than a black void. */
+const ATRIUM_TOP = WALL_H + TILE;
+const ATRIUM_FIX_XS = [ATRIUM_C - TILE, ATRIUM_C + TILE];
+const ATRIUM_BEAM_XS = [ATRIUM_C - TILE * 2.5 + 0.17, ATRIUM_C, ATRIUM_C + TILE * 2.5 - 0.17];
+
+export function AtriumLights() {
+  const housing = useRef<THREE.InstancedMesh>(null);
+  const diffuser = useRef<THREE.InstancedMesh>(null);
+  const halo = useRef<THREE.InstancedMesh>(null);
+  const beams = useRef<THREE.InstancedMesh>(null);
+  const diffMat = useMemo(() => makeDiffuserMaterial(CEIL_COLOR, 1.15, FIX_L / FIX_W), []);
+  const haloMat = useMemo(() => makeHaloMaterial("#a9c2f0", 0.2), []);
+  useInstances(housing, ATRIUM_FIX_XS, ATRIUM_TOP - 0.045, _qIdentity);
+  useInstances(diffuser, ATRIUM_FIX_XS, ATRIUM_TOP - 0.102, FACE_DOWN);
+  useInstances(halo, ATRIUM_FIX_XS, ATRIUM_TOP - 0.006, FACE_DOWN);
+  useInstances(beams, ATRIUM_BEAM_XS, ATRIUM_TOP - 0.13, _qIdentity);
+  return (
+    <group>
+      <instancedMesh ref={housing} args={[undefined, undefined, ATRIUM_FIX_XS.length]} frustumCulled={false}>
+        <boxGeometry args={[FIX_L + 0.26, 0.09, FIX_W + 0.22]} />
+        <meshStandardMaterial color="#141822" roughness={0.45} metalness={0.7} />
+      </instancedMesh>
+      <instancedMesh ref={diffuser} args={[undefined, diffMat, ATRIUM_FIX_XS.length]} frustumCulled={false}>
+        <planeGeometry args={[FIX_L, FIX_W]} />
+      </instancedMesh>
+      <instancedMesh ref={halo} args={[undefined, haloMat, ATRIUM_FIX_XS.length]} frustumCulled={false}>
+        <planeGeometry args={[FIX_L + 1.1, FIX_W + 3.4]} />
+      </instancedMesh>
+      <instancedMesh ref={beams} args={[undefined, undefined, ATRIUM_BEAM_XS.length]} frustumCulled={false}>
+        <boxGeometry args={[0.34, 0.26, HALF_W * 2]} />
+        <meshStandardMaterial color="#343a4d" roughness={0.5} metalness={0.55} />
+      </instancedMesh>
+    </group>
+  );
+}
+
 export function LightShafts() {
   const ref = useRef<THREE.InstancedMesh>(null);
   const geo = useMemo(() => makeShaftGeometry(FIX_L * 0.96, FIX_W * 0.9, FIX_L + 1.3, 2.6, FIX_Y), []);

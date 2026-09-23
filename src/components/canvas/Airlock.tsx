@@ -787,9 +787,13 @@ const DOGS = [0.52, 0.8, 1.06] as const;
 // [unlockA, unlockB, partA, partB]. Mobile starts later: the hero card fades
 // IN PLACE there (desktop slides it off), so the leaves wait until it has
 // mostly cleared instead of parting under a ghosted card.
+/** [unlock start, unlock end, part start, part end] in scroll progress. The
+ *  camera holds at the door over [0, AIRLOCK_HOLD] (hallConfig), so the whole
+ *  choreography plays with the view parked on it — spread over ~4% of the
+ *  scroll instead of the old ~2% that was over before it registered. */
 const TIMING = {
-  desktop: [0.0012, 0.008, 0.0085, 0.03],
-  mobile: [0.002, 0.012, 0.014, 0.036],
+  desktop: [0.002, 0.012, 0.011, 0.038],
+  mobile: [0.002, 0.013, 0.012, 0.04],
 } as const;
 
 // status ring colours (reused temps — zero allocations in useFrame).
