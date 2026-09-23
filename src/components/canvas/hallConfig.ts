@@ -110,7 +110,10 @@ const slotStart = (i: number) => ROOM_LO + i * SLOT;
 const roomSlot = (i: number) => (i < GALLERY_SLOT ? i : i + 1);
 
 export const START_X = ROOMS[0].x - 20;
-const END_X = ROOMS[ROOMS.length - 1].x + 26;
+/** Camera x at p=1: ~9 m short of the bridge canopy (END_VISUAL_X + 8), close
+ *  enough that the canopy fills the frame instead of reading as a small
+ *  window at the end of a corridor (was +26, ~12 m back). */
+const END_X = ROOMS[ROOMS.length - 1].x + 29;
 
 // Showreel feature screen in the entrance lobby, on the +Z (right) wall. The
 // camera dwells DIRECTLY OPPOSITE it and turns fully sideways to face it — same

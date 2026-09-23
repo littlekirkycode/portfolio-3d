@@ -108,7 +108,7 @@ const CONSOLES = [
    [data-cursor] elements. Clicks reach the canvas via the body eventSource
    (see Scene) — the canvas layer itself stays pointer-events:none. */
 
-const TERM_W = 1.8; // screen plane width (world units)
+const TERM_W = 1.5; // screen plane width (world units)
 const TERM_H = TERM_W * (288 / 512); // matches the texture aspect
 
 function setWorldHover(v: boolean) {
@@ -126,10 +126,13 @@ function makeTerminalTexture(
   cursorU: number;
   cursorV: number;
 } {
+  // painted in 512×288 layout units on a 2× backing store — the camera now
+  // parks close enough that the old 1× screens read soft
   const c = document.createElement("canvas");
-  c.width = 512;
-  c.height = 288;
+  c.width = 1024;
+  c.height = 576;
   const ctx = c.getContext("2d")!;
+  ctx.scale(2, 2);
   const mono =
     typeof window !== "undefined"
       ? getComputedStyle(document.documentElement).getPropertyValue("--ff-mono").trim() ||
@@ -177,7 +180,7 @@ function makeTerminalTexture(
   const promptW = ctx.measureText(prompt).width;
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.anisotropy = 16;
   return { tex, cursorU: (40 + promptW + 16) / 512, cursorV: 238 / 288 };
 }
 
@@ -189,7 +192,7 @@ function SocialTerminal({
   header = "COMMS UPLINK — EXT",
   prompt = "> OPEN CHANNEL",
   x = END_X - 2.5,
-  baseHeadY = 1.55,
+  baseHeadY = 1.36,
   activate,
 }: {
   label: string;
@@ -241,18 +244,18 @@ function SocialTerminal({
       {/* base plate + pedestal column (column reaches the head's underside) */}
       <mesh position={[0, 0.03, -0.12]}>
         <boxGeometry args={[0.62, 0.06, 0.5]} />
-        <meshStandardMaterial color="#0d0f18" roughness={0.55} metalness={0.5} />
+        <meshStandardMaterial color="#1f2533" roughness={0.45} metalness={0.6} />
       </mesh>
       <mesh position={[0, (headY - 0.41) / 2 + 0.06, -0.12]}>
         <boxGeometry args={[0.42, headY - 0.41, 0.3]} />
-        <meshStandardMaterial color="#12141f" roughness={0.5} metalness={0.55} />
+        <meshStandardMaterial color="#2a3142" roughness={0.4} metalness={0.65} />
       </mesh>
 
       {/* head — raked back ~7° like a lectern console */}
       <group position={[0, headY, 0]} rotation-x={-0.12}>
         <mesh position={[0, 0, -0.06]}>
           <boxGeometry args={[TERM_W + 0.18, TERM_H + 0.16, 0.1]} />
-          <meshStandardMaterial color="#161a28" roughness={0.45} metalness={0.6} />
+          <meshStandardMaterial color="#303849" roughness={0.38} metalness={0.7} />
         </mesh>
         <mesh
           position={[0, 0, 0.001]}
@@ -399,7 +402,7 @@ function Bridge() {
       {CONSOLES.map((c, i) => (
         <mesh key={`con${i}`} position={[END_X - 1.35, c.h / 2, c.z]}>
           <boxGeometry args={[0.8, c.h, 1.04]} />
-          <meshStandardMaterial color="#0c0d16" roughness={0.5} metalness={0.45} />
+          <meshStandardMaterial color="#1c2230" roughness={0.45} metalness={0.55} />
         </mesh>
       ))}
       {/* ledge strip — DIMMED from the old white rail so the nebula owns the frame */}
@@ -437,7 +440,7 @@ function Bridge() {
         yaw={0}
         phase={0.3}
         x={END_X - 3.2}
-        baseHeadY={1.25}
+        baseHeadY={1.1}
         header="COMMS — DIRECT LINE"
         prompt="> SEND TRANSMISSION"
         // "_self" = location change → the mail client; also lets the verify

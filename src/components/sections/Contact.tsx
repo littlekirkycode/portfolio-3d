@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useState,
   useSyncExternalStore,
   type PointerEvent,
 } from "react";
@@ -24,6 +25,37 @@ const YEAR = new Date().getFullYear();
 type LenisLike = {
   scrollTo: (target: number, opts?: { immediate?: boolean; duration?: number }) => void;
 };
+
+/** Copy-the-address button beside the email pill (mailto does nothing for
+ *  visitors without a mail client). Announces the result politely. */
+function CopyEmail({ className = "", size = "lg" }: { className?: string; size?: "md" | "lg" }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(SITE.email);
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      window.location.href = `mailto:${SITE.email}`;
+    }
+  };
+  return (
+    <button
+      type="button"
+      data-cursor
+      onClick={onCopy}
+      aria-label={copied ? "Email address copied" : "Copy email address"}
+      className={`ui-btn ${size === "lg" ? "ui-btn--lg !px-4" : ""} ${className}`}
+    >
+      <span aria-live="polite" className="min-w-[4.5ch] text-center">
+        {copied ? "Copied" : "Copy"}
+      </span>
+    </button>
+  );
+}
 
 /** Send keyboard focus back to the top panel after departure. */
 function focusAirlock() {
@@ -174,40 +206,56 @@ export default function Contact() {
             "radial-gradient(120% 70% at 0% 55%, rgb(7 7 10 / 0.62) 0%, rgb(7 7 10 / 0.35) 45%, transparent 75%)",
         }}
       />
-      {/* No kicker row — nav, progress rail and HUD readout already all say
-          BRIDGE; the finale keeps one statement and two controls, nothing else. */}
-      {/* Giant statement */}
-      <h2 className="font-display leading-[0.82] tracking-[-0.02em] text-ink">
-        <span className="block overflow-hidden">
-          <SplitText
-            as="span"
-            type="chars"
-            text="Let's"
-            stagger={0.04}
-            riseEm={0.9}
-            className="block text-[18vw] md:text-[min(12vw,16vh)]"
-          />
-        </span>
-        <span className="block overflow-hidden">
-          <SplitText
-            as="span"
-            type="chars"
-            text="talk."
-            delay={0.18}
-            stagger={0.04}
-            riseEm={0.9}
-            className="block pl-[0.04em] text-[18vw] italic text-accent md:text-[min(12vw,16vh)]"
-          />
-        </span>
-      </h2>
+      {/* Comms panel: kicker → statement → pitch → proof → controls. One
+          left column, clear of the bridge consoles (the desktop camera slides
+          the bridge into the right two-thirds — see Rig bridgeShift). */}
+      <div className="flex flex-col gap-5 desktop:gap-[2.6vh]">
+        <span className="ui-kicker ui-kicker--dash text-[color:var(--ui-ink-2)]">Comms · open channel</span>
 
-      {/* Magnetic email button + supporting copy */}
-      <div className="flex w-full flex-col desktop:flex-row desktop:items-end desktop:justify-between desktop:gap-8">
-        {/* No copy card here — it sat straight over the bridge kiosks and the
-            console row (QA: "the box blocks github linkedin and console").
-            The comms flavour lives IN the world now: the HAIL console centre-
-            bridge fires the same mailto as the button below. */}
-        <div className="flex flex-col gap-3 desktop:gap-[2.5vh]">
+        <h2 className="font-display leading-[0.82] tracking-[-0.02em] text-ink">
+          <span className="block overflow-hidden">
+            <SplitText
+              as="span"
+              type="chars"
+              text="Let's"
+              stagger={0.04}
+              riseEm={0.9}
+              className="block text-[18vw] md:text-[min(11vw,14.5vh)]"
+            />
+          </span>
+          <span className="block overflow-hidden">
+            <SplitText
+              as="span"
+              type="chars"
+              text="talk."
+              delay={0.18}
+              stagger={0.04}
+              riseEm={0.9}
+              className="block pl-[0.04em] text-[18vw] italic text-accent md:text-[min(11vw,14.5vh)]"
+            />
+          </span>
+        </h2>
+
+        <p className="max-w-[30ch] text-balance text-lead text-[color:var(--ui-ink-2)] desktop:max-w-[31ch]">
+          {/* non-breaking hyphens: never split "solo-built" across lines */}
+          {SITE.tagline.replace(/-/g, "‑")}
+        </p>
+
+        {/* proof strip — the same numbers as the hero manifest. Desktop only:
+            on phones the column already stacks over the consoles. */}
+        <ul className="hidden max-w-[400px] flex-wrap gap-x-5 gap-y-2 desktop:flex" aria-label="Highlights">
+          {SITE.stats.map((st) => (
+            <li key={st.label} className="flex items-baseline gap-2">
+              <span className="font-display text-[26px] leading-none text-ink">{st.value}</span>
+              <span className="ui-label text-[color:var(--ui-ink-3)]">{st.label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="flex w-full flex-col gap-3 desktop:w-fit desktop:gap-[1.6vh]">
+        {/* primary: magnetic email pill + copy */}
+        <div className="flex w-full gap-2">
           <a
             ref={btnRef}
             href={`mailto:${SITE.email}`}
@@ -215,9 +263,7 @@ export default function Contact() {
             onPointerMove={onMove}
             onPointerLeave={onLeave}
             aria-label={`Email ${SITE.email}`}
-            // Desktop width is capped by type size (~330px at 1440): the pill
-            // must clear the GITHUB console's x-range beside it.
-            className="ui-btn ui-btn--lg ui-btn--primary group w-full max-w-full !justify-between !gap-3 !px-5 !text-label !tracking-[0.08em] !normal-case desktop:w-fit desktop:!justify-center desktop:!gap-4 desktop:!px-6 desktop:!text-body-s desktop:!tracking-[0.06em]"
+            className="ui-btn ui-btn--lg ui-btn--primary group min-w-0 flex-1 !justify-between !gap-3 !px-5 !text-label !tracking-[0.08em] !normal-case desktop:flex-none desktop:!justify-center desktop:!gap-4 desktop:!px-6 desktop:!text-body-s desktop:!tracking-[0.06em]"
           >
             <span className="ui-dot transition-transform duration-500 group-hover:scale-150" aria-hidden />
             <span className="min-w-0 truncate font-mono text-[color:var(--ui-ink)]">{SITE.email}</span>
@@ -228,13 +274,12 @@ export default function Contact() {
               &rarr;
             </span>
           </a>
+          <CopyEmail className="hidden desktop:inline-flex" />
+        </div>
 
-          {/* Socials. The two comms kiosks flanking the bridge console are
-              the designed way in on desktop, so there the links are visually
-              hidden until keyboard focus reveals each one in place (.ui-social,
-              WCAG 2.4.7). On phones the kiosks are too small to be the only
-              way to GitHub / LinkedIn, so they are real, visible chips. */}
-          <nav aria-label="Social links" className="flex gap-2 desktop:relative desktop:order-last desktop:h-0">
+        {/* secondary: socials + DEPART on one quiet row */}
+        <div className="flex flex-wrap gap-2">
+          <nav aria-label="Social links" className="contents">
             {SITE.socials.map((s) => (
               <a
                 key={s.label}
@@ -243,7 +288,7 @@ export default function Contact() {
                 rel="noopener noreferrer"
                 data-cursor
                 aria-label={`${s.label} (opens in a new tab)`}
-                className="ui-btn ui-social flex-1 desktop:flex-none"
+                className="ui-btn min-w-0 flex-1 desktop:flex-none"
               >
                 {s.label}
                 <span aria-hidden className="text-[color:var(--ui-ink-3)]">
@@ -252,7 +297,8 @@ export default function Contact() {
               </a>
             ))}
           </nav>
-
+          {/* phones: Copy joins this row so the email pill keeps full width */}
+          <CopyEmail className="min-w-0 flex-1 desktop:hidden" size="md" />
           {/* DEPART — spins up the warp streak, fades to the hull's dark,
               returns to the airlock. */}
           <button

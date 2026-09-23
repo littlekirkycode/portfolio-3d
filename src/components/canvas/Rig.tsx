@@ -16,6 +16,7 @@ import {
   stopSpacingAt,
   stopsBetween,
   GALLERY_SIDE,
+  BRIDGE_ENTER_P,
 } from "./hallConfig";
 
 type RigProps = { frozen?: boolean; mobile?: boolean };
@@ -181,6 +182,19 @@ function pathStep(p: number): number {
   );
 }
 
+/** Desktop bridge framing: over the bridge approach the camera slides this
+ *  far toward −z (world), so the canopy + comms consoles sit in the right
+ *  two-thirds of the frame, clear of the DOM "Let's talk." column on the
+ *  left. Portrait keeps its own centred framing (pathStep). */
+const BRIDGE_SHIFT_Z = 1.6;
+function bridgeShift(p: number): number {
+  return -BRIDGE_SHIFT_Z * smoother(clamp01((p - BRIDGE_ENTER_P) / (1 - BRIDGE_ENTER_P)));
+}
+/** Lateral step target at playhead p for this device class. */
+function stepAt(p: number, mobile: boolean): number {
+  return mobile ? pathStep(p) : bridgeShift(p);
+}
+
 /**
  * Camera dolly down the corridor. X follows a waypoint path (see hallConfig)
  * that EASES + PARKS at each exhibit; the head pans from one exhibit to the
@@ -256,7 +270,7 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
         c.x0 = s.lastCamX;
         c.x1 = cameraXAt(g.to);
         c.yaw1 = pathYaw(g.to);
-        c.step1 = mobile ? pathStep(g.to) : 0;
+        c.step1 = stepAt(g.to, mobile);
         c.depth = clamp01(
           (stopsBetween(c.from, c.to) - CHO_LONG_LO) / (CHO_LONG_HI - CHO_LONG_LO),
         );
@@ -268,7 +282,7 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
         c.yaw0 = s.yaw.x;
         c.yawOff = s.yaw.x - pathYaw(q0);
         c.step0 = s.step.x;
-        c.stepOff = s.step.x - (mobile ? pathStep(q0) : 0);
+        c.stepOff = s.step.x - (stepAt(q0, mobile));
         // ...and so is its VELOCITY (a second tap mid-hop, a nav click
         // mid-flick): carried in through a quintic Hermite term that is gone
         // by the end, instead of stopping dead and re-accelerating.
@@ -291,7 +305,7 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
       s.gaze.x = 1;
       s.gaze.v = 0;
       yawTarget = pathYaw(raw);
-      stepTarget = mobile ? pathStep(raw) : 0;
+      stepTarget = stepAt(raw, mobile);
       s.yaw.x = yawTarget;
       s.yaw.v = 0;
       s.step.x = stepTarget;
@@ -308,7 +322,7 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
       // short hop: the authored yaw along the way (+ start offset fading out)
       const fade = 1 - e;
       const yawShort = pathYaw(q) + c.yawOff * fade;
-      const stepShort = mobile ? pathStep(q) + c.stepOff * fade : 0;
+      const stepShort = stepAt(q, mobile) + c.stepOff * fade;
       // long trip: turn away → look down the corridor → turn in
       const wOut = settleIn(clamp01(u / CHO_TURN));
       const wIn = settleIn(clamp01((u - (1 - CHO_TURN)) / CHO_TURN));
@@ -378,7 +392,7 @@ export default function Rig({ frozen = false, mobile = false }: RigProps) {
       if (lead > 0 && dest >= p) pLead = Math.min(pLead, dest);
       else if (lead < 0 && dest <= p) pLead = Math.max(pLead, dest);
       yawTarget = pathYaw(pLead) * s.gaze.x;
-      stepTarget = mobile ? pathStep(p) * s.gaze.x : 0;
+      stepTarget = mobile ? pathStep(p) * s.gaze.x : bridgeShift(p);
 
       // ── head follower: velocity + acceleration limited, brakes so it
       //    arrives at rest (v ≤ √(2·a·|err|)), never overshoots ──

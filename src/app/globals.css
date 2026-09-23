@@ -463,28 +463,6 @@ html {
     white-space: nowrap;
   }
 
-  /* ── social chip (bridge) ────────────────────────────────────────── */
-  /* Phones: a visible compact pill (the in-world GITHUB / LINKEDIN kiosks
-     are too small to be the only way in). Desktop: the kiosks carry them, so
-     the link is visually hidden until keyboard focus reveals it in place. */
-  @media (min-width: 768px) and (pointer: fine) {
-    .ui-social:not(:focus-visible) {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      border-width: 0;
-    }
-    .ui-social:focus-visible {
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-  }
-
   /* ── THE DOCK (ProgressBar) ──────────────────────────────────────── */
   /* One grid, named areas — DOM order stays tab order (pager → room
      actions → settings) while the layout puts every control on Row B's
